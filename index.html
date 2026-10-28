@@ -14,12 +14,13 @@
   #scene canvas { display: block; width: 100%; height: 100%; }
   #videoBox { width: 280px; padding: 10px; box-sizing: border-box; }
   video { width: 100%; border-radius: 8px; transform: scaleX(-1); }
-  #status { font-size: 12px; color: #9db4d0; margin-top: 6px; min-height: 48px; }
+  #status { font-size: 12px; color: #9db4d0; margin-top: 6px; min-height: 48px; white-space: pre-wrap; }
   #controls { padding: 10px 16px; background: #16213e; display: flex; gap: 10px; flex-wrap: wrap; }
   button { background: #0f3460; color: #fff; border: 1px solid #3a6ea5; border-radius: 6px; padding: 8px 14px; cursor: pointer; font-size: 14px; }
   button:hover { background: #1a4a8a; }
   button:disabled { opacity: .4; cursor: default; }
   #formula { position: absolute; top: 12px; left: 12px; font-size: 26px; color: #ffd700; text-shadow: 0 2px 4px #000; }
+  .ok { color: #7be37b; } .warn { color: #ffd700; } .err { color: #ff7b7b; }
 </style>
 </head>
 <body>
@@ -54,10 +55,11 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
 const AVATAR_URL = './ready-player-me-harry-potter/source/harry.glb';
 const statusEl = document.getElementById('status');
-const setStatus = t => statusEl.textContent = t;
+const setStatus = (t, cls) => { statusEl.textContent = t; statusEl.className = cls || ''; };
 
-let scene, camera, renderer, model, headBone, armBones = {}, morphMap = {};
+let scene, camera, renderer, model, headBone, armBones = {}, morphMap = {}, morphLower = {};
 let faceLandmarker, poseLandmarker, video, running = false, idleMode = false, speaking = false, t = 0;
+let faceSeen = false, lastVideoTime = -1, lastFaceTime = 0, lastPoseTime = 0, errCount = 0, lastErr = '';
 const lerp = (a, b, k) => a + (b - a) * k;
 
 function buildScene() {
@@ -84,68 +86,84 @@ function buildScene() {
 function setupAvatar(gltf) {
   model = gltf.scene;
   scene.add(model);
+  const morphNames = [];
   model.traverse(o => {
     if (o.isBone) {
       if (o.name === 'Head') headBone = o;
       if (o.name === 'LeftArm') armBones.L = o;
       if (o.name === 'RightArm') armBones.R = o;
     }
-    if (o.isMesh) o.frustumCulled = false;
-  });
-  model.traverse(o => {
-    if (o.isMesh && o.morphTargetDictionary) {
-      for (const name in o.morphTargetDictionary) {
-        if (!(name in morphMap)) morphMap[name] = [];
-        morphMap[name].push({ mesh: o, index: o.morphTargetDictionary[name] });
+    if (o.isMesh) {
+      o.frustumCulled = false;
+      if (o.morphTargetDictionary) {
+        for (const name in o.morphTargetDictionary) {
+          if (!(name in morphMap)) { morphMap[name] = []; morphNames.push(name); }
+          morphMap[name].push({ mesh: o, index: o.morphTargetDictionary[name] });
+        }
       }
     }
   });
-  const hasJaw = 'jawOpen' in morphMap;
-  const hasHead = !!headBone;
-  if (!hasJaw) setStatus('⚠️ Keine Blendshapes im GLB! Mimik/Sprechen geht nicht, nur Kopfdrehen. Tipp: Original-GLB von readyplayer.me verwenden (Sketchfab-Export verliert oft die Formen).');
-  else if (!hasHead) setStatus('⚠️ Kein "Head"-Knochen gefunden – Kopf-Rotation deaktiviert.');
-  else setStatus('Avatar geladen ✔ Blendshapes: ' + Object.keys(morphMap).length + ' | Head-Bone ✔');
+  // Lookup: Kleinbuchstaben → Originalname (falls Morphnamen abweichen)
+  for (const name of Object.keys(morphMap)) morphLower[name.toLowerCase()] = name;
+  const hasJaw = 'jawopen' in morphLower;
+  console.log('Morph-Targets:', morphNames.join(', '));
+  console.log('Bones: Head=' + !!headBone + ' LeftArm=' + !!armBones.L + ' RightArm=' + !!armBones.R);
+  if (!hasJaw) setStatus('⚠️ Keine jawOpen-Blendshapes im GLB – Mimik geht nicht. Sketchfab-Export verliert oft die Formen. Original-GLB von readyplayer.me verwenden.', 'warn');
+  else if (!headBone) setStatus('⚠️ Kein "Head"-Knochen gefunden – Kopf-Rotation deaktiviert.', 'warn');
 }
 
 function setMorph(name, value) {
-  const list = morphMap[name];
+  const list = morphMap[morphLower[name.toLowerCase()] || name];
   if (!list) return;
   for (const { mesh, index } of list) mesh.morphTargetInfluences[index] = value;
 }
 
+async function loadLandmarker(vision, fileset, kind, modelPath) {
+  // Erst GPU, bei Fehler CPU (Intel-Grafik mag GPU-Delegate oft nicht)
+  for (const delegate of ['GPU', 'CPU']) {
+    try {
+      return await (kind === 'face' ? vision.FaceLandmarker : vision.PoseLandmarker).createFromOptions(fileset, {
+        baseOptions: { modelAssetPath: modelPath, delegate },
+        outputFaceBlendshapes: true, outputFacialTransformationMatrixes: kind === 'face',
+        numFaces: 1, numPoses: 1
+      });
+    } catch (e) {
+      console.warn(kind + ' mit ' + delegate + ' fehlgeschlagen:', e);
+      if (delegate === 'CPU') throw e;
+    }
+  }
+}
+
 async function startWebcam() {
-  setStatus('Baue Szene auf…');
   buildScene();
   setStatus('Lade Avatar (harry.glb, ~8 MB)…');
   let gltf;
   try { gltf = await new GLTFLoader().loadAsync(AVATAR_URL); }
-  catch (e) { setStatus('❌ Avatar nicht geladen: ' + e.message + ' – liegt harry.glb im Pfad ready-player-me-harry-potter/source/?'); return; }
+  catch (e) { setStatus('❌ Avatar nicht geladen: ' + e.message, 'err'); return; }
   setupAvatar(gltf);
 
+  setStatus('Lade KI-Modelle…');
   const vision = await import('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs');
   const fileset = await vision.FilesetResolver.forVisionTasks('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm');
-  faceLandmarker = await vision.FaceLandmarker.createFromOptions(fileset, {
-    baseOptions: { modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task', delegate: 'GPU' },
-    outputFaceBlendshapes: true, outputFacialTransformationMatrixes: true, numFaces: 1
-  });
-  poseLandmarker = await vision.PoseLandmarker.createFromOptions(fileset, {
-    baseOptions: { modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task', delegate: 'GPU' },
-    numPoses: 1
-  });
+  faceLandmarker = await loadLandmarker(vision, fileset, 'face', 'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task');
+  poseLandmarker = await loadLandmarker(vision, fileset, 'pose', 'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task');
+
   setStatus('Starte Webcam…');
   video = document.getElementById('video');
-  video.srcObject = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } });
+  video.srcObject = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 }, audio: false });
   await video.play();
+  await new Promise(r => { video.readyState >= 2 ? r() : video.onloadeddata = r; });
   running = true;
   document.getElementById('speakBtn').disabled = false;
   document.getElementById('idleBtn').disabled = false;
-  setStatus('✅ Läuft! Kopf bewegen, mimiken, Arme heben – der Avatar folgt.');
+  setStatus('✅ Läuft! Schau in die Kamera, bewege den Kopf.', 'ok');
   requestAnimationFrame(animate);
 }
 
 const rot = { x: 0, y: 0, z: 0 };
 function applyFace(res) {
   if (res.faceBlendshapes && res.faceBlendshapes.length) {
+    faceSeen = true; lastFaceTime = t;
     for (const cat of res.faceBlendshapes[0].categories) setMorph(cat.categoryName, cat.score);
   }
   if (res.facialTransformationMatrixes && res.facialTransformationMatrixes.length && headBone) {
@@ -163,9 +181,10 @@ function applyFace(res) {
 function applyPose(res) {
   if (!res.landmarks || !res.landmarks.length) return;
   const lm = res.landmarks[0];
+  lastPoseTime = t;
   function armBone(side, s, w) {
     const bone = side === 'L' ? armBones.L : armBones.R;
-    if (!bone || lm[w].visibility < 0.5) return;
+    if (!bone || (lm[w].visibility ?? 1) < 0.5) return;
     const dx = lm[w].x - lm[s].x;
     const dy = lm[w].y - lm[s].y;
     const ang = Math.atan2(-dy, Math.abs(dx));
@@ -174,6 +193,21 @@ function applyPose(res) {
   }
   armBone('L', 11, 15);
   armBone('R', 12, 16);
+}
+
+function trackStep() {
+  // Nur auswerten, wenn ein NEUER Videoframe da ist – sonst wirft MediaPipe Fehler
+  if (video.currentTime === lastVideoTime || video.readyState < 2) return;
+  lastVideoTime = video.currentTime;
+  const now = performance.now();
+  try { applyFace(faceLandmarker.detectForVideo(video, now)); errCount = 0; }
+  catch (e) { errCount++; lastErr = 'Face: ' + e.message; console.error(e); }
+  try { applyPose(poseLandmarker.detectForVideo(video, now + 1)); }
+  catch (e) { errCount++; lastErr = 'Pose: ' + e.message; console.error(e); }
+  // Diagnose in der Statuszeile
+  if (errCount > 30) { setStatus('❌ Tracking-Fehler: ' + lastErr + ' (siehe Konsole F12)', 'err'); return; }
+  if (t - lastFaceTime > 2) setStatus('📷 Kamera läuft, aber kein Gesicht erkannt. Gut beleuchten, Gesicht mittig in die Kamera schauen.', 'warn');
+  else setStatus('✅ Gesicht erkannt – Kopf bewegen, Mund auf, Arme heben!' + (t - lastPoseTime > 2 ? ' (Pose schwach – Abstand halten)' : ''), 'ok');
 }
 
 function animate() {
@@ -189,9 +223,7 @@ function animate() {
     if (armBones.L) armBones.L.rotation.z = 0.6 + 0.25 * Math.sin(t * 2);
     if (armBones.R) armBones.R.rotation.z = -0.6 - 0.25 * Math.sin(t * 2 + 1);
   } else {
-    const now = performance.now();
-    try { applyFace(faceLandmarker.detectForVideo(video, now)); } catch (e) {}
-    try { applyPose(poseLandmarker.detectForVideo(video, now)); } catch (e) {}
+    trackStep();
   }
   if (speaking) setMorph('jawOpen', Math.max(0.15, 0.5 * Math.abs(Math.sin(t * 14))));
   renderer.render(scene, camera);
@@ -205,7 +237,7 @@ const lines = [
 ];
 let lineIdx = 0;
 function speak() {
-  if (!('speechSynthesis' in window)) { setStatus('Dein Browser unterstützt keine Sprachausgabe.'); return; }
+  if (!('speechSynthesis' in window)) { setStatus('Dein Browser unterstützt keine Sprachausgabe.', 'warn'); return; }
   speaking = true;
   const u = new SpeechSynthesisUtterance(lines[lineIdx % lines.length]);
   lineIdx++;
@@ -214,11 +246,12 @@ function speak() {
   speechSynthesis.speak(u);
 }
 
-document.getElementById('startBtn').onclick = e => { e.target.disabled = true; startWebcam().catch(err => setStatus('❌ ' + err.message)); };
+document.getElementById('startBtn').onclick = e => { e.target.disabled = true; startWebcam().catch(err => { console.error(err); setStatus('❌ ' + err.message, 'err'); }); };
 document.getElementById('speakBtn').onclick = speak;
 document.getElementById('idleBtn').onclick = e => {
   idleMode = !idleMode;
   e.target.textContent = idleMode ? '🎥 Webcam-Steuerung' : '🕺 Demo-Modus';
+  if (!idleMode) setStatus('Webcam-Steuerung aktiv. Schau in die Kamera.', 'ok');
 };
 setStatus('Bereit. "Webcam starten" klicken – läuft lokal oder via GitHub Pages (HTTPS nötig für Kamera).');
 </script>
