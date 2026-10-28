@@ -1,0 +1,293 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Pythagoras 3D Avatar – Webcam-Steuerung</title>
+<style>
+  :root { font-family: system-ui, sans-serif; background: #1a1a2e; color: #eee; }
+  body { margin: 0; display: flex; flex-direction: column; height: 100vh; }
+  header { padding: 10px 16px; background: #16213e; display: flex; justify-content: space-between; align-items: center; }
+  header h1 { font-size: 18px; margin: 0; }
+  #main { display: flex; flex: 1; min-height: 0; }
+  #scene { flex: 1; position: relative; }
+  canvas { display: block; width: 100%; height: 100%; }
+  #videoBox { width: 280px; padding: 10px; box-sizing: border-box; }
+  video { width: 100%; border-radius: 8px; transform: scaleX(-1); }
+  #status { font-size: 12px; color: #9db4d0; margin-top: 6px; min-height: 32px; }
+  #controls { padding: 10px 16px; background: #16213e; display: flex; gap: 10px; flex-wrap: wrap; }
+  button { background: #0f3460; color: #fff; border: 1px solid #3a6ea5; border-radius: 6px; padding: 8px 14px; cursor: pointer; font-size: 14px; }
+  button:hover { background: #1a4a8a; }
+  button:disabled { opacity: .4; cursor: default; }
+  #formula { position: absolute; top: 12px; left: 12px; font-size: 26px; color: #ffd700; text-shadow: 0 2px 4px #000; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🏛️ Pythagoras 3D – per Webcam gesteuert</h1>
+  <span style="font-size:12px;color:#9db4d0">Kopf bewegen → er folgt. Mund auf/zu → er spricht mit.</span>
+</header>
+<div id="main">
+  <div id="scene">
+    <div id="formula">a² + b² = c²</div>
+  </div>
+  <div id="videoBox">
+    <video id="video" autoplay playsinline muted></video>
+    <div id="status">Noch nicht gestartet.</div>
+  </div>
+</div>
+<div id="controls">
+  <button id="startBtn">▶ Webcam starten</button>
+  <button id="speakBtn" disabled>🗣️ Pythagoras sprechen lassen</button>
+  <button id="idleBtn" disabled>🕺 Demo-Bewegung</button>
+</div>
+
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"
+} }
+</script>
+<script type="module">
+const statusEl = document.getElementById('status');
+const setStatus = t => statusEl.textContent = t;
+
+// Prüfen, ob externe Skripte geladen werden können (Canvas-/Sandbox-Umgebungen blockieren das oft)
+async function canLoad(url) {
+  try { await import(url); return true; } catch (e) { return false; }
+}
+
+let THREE, FaceLandmarker, PoseLandmarker;
+
+async function loadLibs() {
+  THREE = await import('three');
+  const vision = await import('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs');
+  FaceLandmarker = vision.FaceLandmarker;
+  PoseLandmarker = vision.PoseLandmarker;
+}
+
+// ---------- 3D-Szene: stilisierter Pythagoras aus Grundkörpern ----------
+let scene, camera, renderer, figure, head, jaw, leftArm, rightArm, torso;
+
+function buildScene() {
+  scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x16213e);
+  camera = new THREE.PerspectiveCamera(45, 16/9, 0.1, 100);
+  camera.position.set(0, 1.6, 4.5);
+  camera.lookAt(0, 1.2, 0);
+  renderer = new THREE.WebGLRenderer({ antialias: true });
+  document.getElementById('scene').prepend(renderer.domElement);
+  function resize() {
+    const el = document.getElementById('scene');
+    renderer.setSize(el.clientWidth, el.clientHeight);
+    camera.aspect = el.clientWidth / el.clientHeight;
+    camera.updateProjectionMatrix();
+  }
+  window.addEventListener('resize', resize); resize();
+
+  scene.add(new THREE.AmbientLight(0xffffff, 0.7));
+  const dir = new THREE.DirectionalLight(0xfff2d0, 1.2);
+  dir.position.set(2, 4, 3); scene.add(dir);
+
+  figure = new THREE.Group();
+  const skin = new THREE.MeshLambertMaterial({ color: 0xd9a066 });
+  const toga = new THREE.MeshLambertMaterial({ color: 0xf5f0e6 });
+  const beardM = new THREE.MeshLambertMaterial({ color: 0xe8e8e8 });
+  const dark = new THREE.MeshLambertMaterial({ color: 0x2b2b40 });
+
+  // Toga (Kegelstumpf-artig)
+  torso = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.55, 1.1, 12), toga);
+  torso.position.y = 0.95; figure.add(torso);
+  const skirt = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.68, 0.5, 12), toga);
+  skirt.position.y = 0.35; figure.add(skirt);
+
+  // Kopf mit Bart
+  head = new THREE.Group();
+  const skull = new THREE.Mesh(new THREE.SphereGeometry(0.22, 20, 16), skin);
+  skull.scale.set(1, 1.15, 1); head.add(skull);
+  const beard = new THREE.Mesh(new THREE.ConeGeometry(0.16, 0.3, 10), beardM);
+  beard.position.set(0, -0.2, 0.07); head.add(beard);
+  const hair = new THREE.Mesh(new THREE.SphereGeometry(0.235, 16, 12, 0, Math.PI*2, 0, Math.PI/2.4), beardM);
+  hair.position.y = 0.03; head.add(hair);
+  const eyeL = new THREE.Mesh(new THREE.SphereGeometry(0.03, 8, 8), dark);
+  const eyeR = eyeL.clone();
+  eyeL.position.set(-0.08, 0.04, 0.19); eyeR.position.set(0.08, 0.04, 0.19);
+  head.add(eyeL, eyeR);
+  // Mund (unten, skaliert für Sprechen)
+  jaw = new THREE.Mesh(new THREE.SphereGeometry(0.06, 10, 8), new THREE.MeshLambertMaterial({ color: 0x7a2f2f }));
+  jaw.position.set(0, -0.1, 0.185); head.add(jaw);
+  head.position.y = 1.75; figure.add(head);
+
+  // Arme (Schulter-Ellbogen-Hand als Gruppen, einfache 2-Segment-Rotation)
+  function makeArm(side) {
+    const shoulder = new THREE.Group();
+    shoulder.position.set(side * 0.45, 1.5, 0);
+    const upper = new THREE.Mesh(new THREE.CapsuleGeometry(0.07, 0.35, 4, 8), skin);
+    upper.position.y = -0.2; shoulder.add(upper);
+    const elbow = new THREE.Group();
+    elbow.position.y = -0.42; shoulder.add(elbow);
+    const fore = new THREE.Mesh(new THREE.CapsuleGeometry(0.06, 0.32, 4, 8), skin);
+    fore.position.y = -0.2; elbow.add(fore);
+    const hand = new THREE.Mesh(new THREE.SphereGeometry(0.08, 8, 8), skin);
+    hand.position.y = -0.42; elbow.add(hand);
+    figure.add(shoulder);
+    return { shoulder, elbow };
+  }
+  leftArm = makeArm(-1); rightArm = makeArm(1);
+  scene.add(figure);
+}
+
+// ---------- Zieldaten vom Tracking (mit Smoothing) ----------
+const target = { headYaw: 0, headPitch: 0, headRoll: 0, mouth: 0, lArm: null, rArm: null };
+const smooth = { ...target };
+function lerp(a, b, t) { return a + (b - a) * t; }
+
+// ---------- MediaPipe Setup ----------
+let faceLandmarker, poseLandmarker, video, running = false, idleMode = false, speaking = false;
+
+async function startWebcam() {
+  setStatus('Lade Bibliotheken & KI-Modelle (erster Start dauert ~10 s)…');
+  try {
+    await loadLibs();
+  } catch (e) {
+    setStatus('❌ Konnte Bibliotheken nicht laden. Falls du diese Seite in einer Vorschau siehst: Datei herunterladen und direkt im Browser öffnen.');
+    return;
+  }
+  buildScene();
+
+  const fileset = await (await import('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs')).FilesetResolver.forVisionTasks(
+    'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm');
+  faceLandmarker = await FaceLandmarker.createFromOptions(fileset, {
+    baseOptions: { modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task', delegate: 'GPU' },
+    outputFaceBlendshapes: true, numFaces: 1
+  });
+  setStatus('Starte Webcam…');
+  video = document.getElementById('video');
+  const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } });
+  video.srcObject = stream;
+  await video.play();
+  running = true;
+  document.getElementById('speakBtn').disabled = false;
+  document.getElementById('idleBtn').disabled = false;
+  setStatus('✅ Läuft! Bewege den Kopf, öffne den Mund, rede – Pythagoras folgt.');
+  requestAnimationFrame(animate);
+}
+
+// Mediapipe Face-Landmark-Indizes
+const NOSE=1, CHIN=152, FOREHEAD=10, L_CHEEK=234, R_CHEEK=454, L_LIP=13, R_LIP=14, TOP_LIP=0, BOT_LIP=17;
+
+function trackFace(res) {
+  if (!res || !res.faceLandmarks || !res.faceLandmarks.length) return;
+  const lm = res.faceLandmarks[0];
+  // Gier (links/rechts) & Nick (oben/unten) & Roll aus Wangen/Nase/Kinn
+  const dx = lm[R_CHEEK].x - lm[L_CHEEK].x;
+  const faceW = Math.hypot(dx, lm[R_CHEEK].y - lm[L_CHEEK].y) + 1e-6;
+  const dy = lm[FOREHEAD].y - lm[CHIN].y;
+  target.headYaw = Math.max(-0.8, Math.min(0.8, -(dx / faceW - 0) * 1.2));
+  target.headPitch = Math.max(-0.5, Math.min(0.5, -(lm[NOSE].y - (lm[FOREHEAD].y + lm[CHIN].y) / 2) * 4));
+  target.headRoll = Math.atan2(lm[R_CHEEK].y - lm[L_CHEEK].y, dx);
+  // Mundöffnung relativ zur Gesichtshöhe
+  const faceH = Math.abs(dy);
+  target.mouth = Math.min(1, (lm[BOT_LIP].y - lm[TOP_LIP].y) / (faceH * 0.7));
+}
+
+// Pose: Handgelenke relativ zu Schultern → einfache Arm-Haltungen
+const LS=11, RS=12, LW=13, RW=15, LE=13, RE=14; // Pose-Indizes: Schultern 11/12, Ellbogen 13/14, Handgelenke 15/16
+function trackPose(res) {
+  if (!res || !res.landmarks || !res.landmarks.length) return;
+  const lm = res.landmarks[0];
+  function armFor(sIdx, eIdx, wIdx) {
+    if (lm[wIdx].visibility < 0.5) return null;
+    const dx = lm[wIdx].x - lm[sIdx].x;
+    const dy = lm[wIdx].y - lm[sIdx].y;
+    const len = Math.hypot(dx, dy);
+    if (len < 0.04) return null;
+    // Winkel: 0 = Arm hängt runter, +x = Hand seitlich oben
+    return { angle: Math.atan2(-dy, Math.abs(dx)) , lift: Math.min(1, len * 1.6) };
+  }
+  target.lArm = armFor(11, 13, 15);
+  target.rArm = armFor(12, 14, 16);
+}
+
+// ---------- Animation Loop ----------
+let t = 0;
+function animate() {
+  if (!running) return;
+  t += 0.016;
+
+  if (idleMode || !faceLandmarker) {
+    // Demo-Modus: figura animiert sich selbst
+    target.headYaw = Math.sin(t * 0.8) * 0.5;
+    target.headPitch = Math.sin(t * 0.5) * 0.15;
+    target.headRoll = Math.sin(t * 0.3) * 0.1;
+    target.mouth = 0.5 + 0.5 * Math.sin(t * 9);
+    target.lArm = { angle: 1.2 + 0.4 * Math.sin(t * 2), lift: 0.9 };
+    target.rArm = { angle: 1.2 + 0.4 * Math.sin(t * 2 + 1), lift: 0.9 };
+  } else {
+    try { trackFace(faceLandmarker.detectForVideo(video, performance.now())); } catch(e) {}
+  }
+
+  const k = 0.15; // Smoothing
+  for (const key of ['headYaw','headPitch','headRoll','mouth']) smooth[key] = lerp(smooth[key], target[key], k);
+  smooth.lArm = target.lArm ? { angle: lerp(smooth.lArm?.angle ?? 0, target.lArm.angle, k), lift: lerp(smooth.lArm?.lift ?? 0, target.lArm.lift, k) } : smooth.lArm;
+  smooth.rArm = target.rArm ? { angle: lerp(smooth.rArm?.angle ?? 0, target.rArm.angle, k), lift: lerp(smooth.rArm?.lift ?? 0, target.rArm.lift, k) } : smooth.rArm;
+
+  // Mund: Webcam-Wert oder TTS-Sprechen
+  let mouth = smooth.mouth;
+  if (speaking) mouth = Math.max(mouth, 0.3 + 0.4 * Math.abs(Math.sin(t * 14)));
+  jaw.scale.set(1 + mouth * 1.4, 1 + mouth * 2.2, 0.5 + mouth * 0.8);
+
+  // Kopf
+  head.rotation.set(smooth.headPitch, smooth.headYaw, smooth.headRoll);
+
+  // Arme
+  function poseArm(arm, s, side) {
+    if (!s) { // zurück zur Ruheposition
+      arm.shoulder.rotation.z = lerp(arm.shoulder.rotation.z, side * 0.15, 0.1);
+      arm.elbow.rotation.z = lerp(arm.elbow.rotation.z, 0, 0.1);
+      return;
+    }
+    const ang = s.angle; // ~0 hängt, ~1.5 horizontal, ~3 über Kopf
+    // einfache Hebung: Arm folgt dem Winkel zwischen Schulter und Handgelenk
+    arm.shoulder.rotation.z = lerp(arm.shoulder.rotation.z, side * Math.min(1.6, ang) * s.lift * 1.2, 0.15);
+    arm.elbow.rotation.z = lerp(arm.elbow.rotation.z, side * 0.4 * s.lift, 0.15);
+  }
+  poseArm(leftArm, smooth.lArm, -1);
+  poseArm(rightArm, smooth.rArm, 1);
+
+  // leichtes Schweben
+  figure.position.y = Math.sin(t * 1.2) * 0.02;
+  renderer.render(scene, camera);
+  requestAnimationFrame(animate);
+}
+
+// ---------- Sprechen (Text-to-Speech + Mundanimation) ----------
+const lines = [
+  'Seid gegrüßt! Ich bin Pythagoras. Im rechtwinkligen Dreieck gilt: a Quadrat plus b Quadrat gleich c Quadrat.',
+  'Merkt euch: Die Hypotenuse ist immer die längste Seite, sie liegt dem rechten Winkel gegenüber.',
+  'Ein Beispiel: drei, vier, fünf. Drei Quadrat ist neun, vier Quadrat ist sechzehn, zusammen fünfundzwanzig – und die Wurzel davon ist fünf!'
+];
+let lineIdx = 0;
+function speak() {
+  if (!('speechSynthesis' in window)) { setStatus('Dein Browser unterstützt keine Sprachausgabe.'); return; }
+  speaking = true; speakingSince = Date.now();
+  const u = new SpeechSynthesisUtterance(lines[lineIdx % lines.length]);
+  lineIdx++;
+  u.lang = 'de-DE'; u.rate = 0.95;
+  u.onend = () => { speaking = false; };
+  speechSynthesis.speak(u);
+}
+let speakingSince = 0;
+
+document.getElementById('startBtn').onclick = () => {
+  document.getElementById('startBtn').disabled = true;
+  startWebcam().catch(e => { setStatus('❌ Fehler: ' + e.message); console.error(e); });
+};
+document.getElementById('speakBtn').onclick = speak;
+document.getElementById('idleBtn').onclick = () => {
+  idleMode = !idleMode;
+  document.getElementById('idleBtn').textContent = idleMode ? '🎥 Webcam-Steuerung' : '🕺 Demo-Bewegung';
+};
+setStatus('Bereit. Klicke auf "Webcam starten". (Falls die Vorschau das blockiert: HTML herunterladen und lokal öffnen.)');
+</script>
+</body>
+</html>
