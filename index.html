@@ -1,282 +1,356 @@
 <!doctype html>
 <html lang="de">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>3D-Avatar – per Webcam gesteuert (Ready Player Me + MediaPipe)</title>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Das Sieb des Eratosthenes im antiken Lernhof</title>
 <style>
-  :root { font-family: system-ui, sans-serif; background: #1a1a2e; color: #eee; }
-  body { margin: 0; display: flex; flex-direction: column; height: 100vh; }
-  header { padding: 10px 16px; background: #16213e; display: flex; justify-content: space-between; align-items: center; }
-  header h1 { font-size: 18px; margin: 0; }
-  #main { display: flex; flex: 1; min-height: 0; }
-  #scene { flex: 1; position: relative; }
-  #scene canvas { display: block; width: 100%; height: 100%; }
-  #videoBox { width: 280px; padding: 10px; box-sizing: border-box; }
-  video { width: 100%; border-radius: 8px; transform: scaleX(-1); }
-  #status { font-size: 12px; color: #9db4d0; margin-top: 6px; min-height: 48px; white-space: pre-wrap; }
-  #controls { padding: 10px 16px; background: #16213e; display: flex; gap: 10px; flex-wrap: wrap; }
-  button { background: #0f3460; color: #fff; border: 1px solid #3a6ea5; border-radius: 6px; padding: 8px 14px; cursor: pointer; font-size: 14px; }
-  button:hover { background: #1a4a8a; }
-  button:disabled { opacity: .4; cursor: default; }
-  #formula { position: absolute; top: 12px; left: 12px; font-size: 26px; color: #ffd700; text-shadow: 0 2px 4px #000; }
-  .ok { color: #7be37b; } .warn { color: #ffd700; } .err { color: #ff7b7b; }
+  :root { color-scheme: dark; font-family: system-ui, sans-serif; }
+  * { box-sizing: border-box; }
+  body { margin:0; overflow:hidden; background:#101827; color:#f5f0e6; }
+  #hud { position:fixed; z-index:5; inset:0; pointer-events:none; }
+  .panel { background:rgba(12,23,39,.88); border:1px solid rgba(220,200,155,.45);
+           border-radius:12px; padding:12px 15px; box-shadow:0 8px 30px #0004; pointer-events:auto; }
+  #title { position:absolute; left:16px; top:16px; width:280px; }
+  #title h1 { margin:0 0 4px; font:600 18px Georgia,serif; color:#f3d89b; }
+  #title p { margin:0; font-size:12px; color:#d6e0e9; }
+  
+  #controls-hud { position:absolute; left:16px; top:96px; width:280px; font-size:12px; line-height:1.5; }
+  #controls-hud strong { color:#f3d89b; }
+
+  #webcam-panel { position:absolute; left:16px; bottom:16px; width:280px; font-size:12px; }
+  #webcam-container { position:relative; width:100%; height:130px; background:#000; border-radius:8px; overflow:hidden; margin-top:8px; }
+  #webcam-video { position:absolute; width:100%; height:100%; object-fit:cover; transform:scaleX(-1); }
+  #webcam-status { display:flex; align-items:center; gap:6px; margin-top:6px; font-size:11px; color:#a8e6b0; }
+  .status-dot { width:8px; height:8px; border-radius:50%; background:#a8e6b0; }
+
+  #hint { position:absolute; right:16px; top:16px; width:310px; font-size:12px; line-height:1.5; color:#d6e0e9; }
+  #hint strong { color:#f3d89b; display:block; margin-bottom:6px; font-size:13px; }
+  #hint ol { margin:0; padding-left:18px; }
+  #hint li { margin-bottom:4px; }
+  #hint .sub { margin-top:8px; font-size:11px; color:#bba882; }
+
+  #bottom { position:absolute; left:312px; right:16px; bottom:16px; display:flex; gap:12px; align-items:flex-end; }
+  #message-box { flex:1; background:rgba(12,23,39,.92); border:1px solid rgba(220,200,155,.45); border-radius:12px; padding:12px 16px; pointer-events:auto; }
+  #speaker-title { font:600 14px Georgia,serif; color:#f3d89b; margin-bottom:4px; display:flex; align-items:center; justify-content:space-between; }
+  #message { font:15px/1.4 Georgia,serif; color:#f5f0e6; min-height:42px; }
+  
+  .action-btn { border:1px solid #b69a61; background:#253d56; color:#fff5dc; border-radius:7px; padding:8px 12px; cursor:pointer; font-size:13px; pointer-events:auto; }
+  .action-btn:hover { background:#365574; }
+
+  #crosshair { position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); color:#f7e6bb; font-size:22px; opacity:.7; pointer-events:none; }
+  @media(max-width:900px) { #hint { display:none; } #bottom { left:16px; } }
 </style>
+<script type="importmap">
+{"imports":{
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "@mediapipe/camera_utils": "https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3.1640029074/camera_utils.js",
+  "@mediapipe/face_mesh": "https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh@0.4.1633559619/face_mesh.js"
+}}
+</script>
 </head>
 <body>
-<header>
-  <h1>🧙 3D-Avatar – per Webcam gesteuert</h1>
-  <span style="font-size:12px;color:#9db4d0">Kopf & Mimik folgen dir, Arme per Körperhaltung</span>
-</header>
-<div id="main">
-  <div id="scene">
-    <div id="formula">a² + b² = c²</div>
+<div id="hud">
+  <section id="title" class="panel">
+    <h1>Das Sieb des Eratosthenes</h1>
+    <p>Primzahlen bis 100 entdecken</p>
+  </section>
+
+  <section id="controls-hud" class="panel">
+    <strong>Steuerung:</strong><br>
+    W A S D – Bewegen &nbsp;|&nbsp; Maus – Blickrichtung<br>
+    Leertaste – Nächster Schritt &nbsp;|&nbsp; R – Zurücksetzen<br>
+    E – Erklärung vorlesen
+  </section>
+
+  <section id="webcam-panel" class="panel">
+    <strong>Webcam-Avatar-Steuerung</strong>
+    <div id="webcam-container">
+      <video id="webcam-video" autoplay playsinline muted></video>
+    </div>
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-top:8px;">
+      <div id="webcam-status"><div class="status-dot"></div><span id="stat-text">Webcam bereit</span></div>
+      <button id="toggle-cam" class="action-btn" style="padding:4px 8px; font-size:11px;">Starten</button>
+    </div>
+  </section>
+
+  <section id="hint" class="panel">
+    <strong>So funktioniert’s:</strong>
+    <ol>
+      <li>Die 1 ist keine Primzahl (grau).</li>
+      <li>Die 2 ist eine Primzahl (grün) – markiere alle Vielfachen von 2 (rot).</li>
+      <li>Die nächste nicht markierte Zahl ist 3 – sie ist prim.</li>
+      <li>Markiere alle Vielfachen von 3 (rot).</li>
+      <li>Fahre so fort mit 5, 7 ...</li>
+      <li>Am Ende bleiben die Primzahlen übrig (grün).</li>
+    </ol>
+    <div class="sub">Bis 100 genügt es, die Primzahlen bis $\sqrt{100} = 10$ zu verwenden: 2, 3, 5, 7.</div>
+  </section>
+
+  <div id="crosshair">·</div>
+
+  <div id="bottom">
+    <div id="message-box">
+      <div id="speaker-title">
+        <span>Eratosthenes</span>
+        <button id="speak" class="action-btn" style="padding:2px 8px; font-size:12px;">🔊 Vorlesen</button>
+      </div>
+      <div id="message">Willkommen! Gehe zur Zahlenwand und entdecke mit mir die Primzahlen. Drücke die Leertaste, um zu beginnen.</div>
+    </div>
+    <button id="next" class="action-btn" style="height:48px; font-weight:bold;">Nächster Schritt ␣</button>
+    <button id="reset" class="action-btn" style="height:48px;">Zurücksetzen (R)</button>
   </div>
-  <div id="videoBox">
-    <video id="video" autoplay playsinline muted></video>
-    <div id="status">Noch nicht gestartet.</div>
-  </div>
-</div>
-<div id="controls">
-  <button id="startBtn">▶ Webcam starten</button>
-  <button id="speakBtn" disabled>🗣️ Sprechen lassen (Satz des Pythagoras)</button>
-  <button id="idleBtn" disabled>🕺 Demo-Modus</button>
 </div>
 
-<script type="importmap">
-{ "imports": {
-  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
-  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
-} }
-</script>
 <script type="module">
 import * as THREE from 'three';
-import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { FaceMesh } from '@mediapipe/face_mesh';
+import { Camera } from '@mediapipe/camera_utils';
 
-const AVATAR_URL = './ready-player-me-harry-potter/source/harry.glb';
-const statusEl = document.getElementById('status');
-const setStatus = (t, cls) => { statusEl.textContent = t; statusEl.className = cls || ''; };
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x8ab5d8);
+scene.fog = new THREE.Fog(0x8ab5d8, 22, 65);
+const camera3D = new THREE.PerspectiveCamera(65, innerWidth/innerHeight, .1, 120);
+const renderer = new THREE.WebGLRenderer({antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.setSize(innerWidth,innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.1;
+document.body.appendChild(renderer.domElement);
+renderer.domElement.style.position='fixed'; renderer.domElement.style.inset='0'; renderer.domElement.style.zIndex='0';
 
-let scene, camera, renderer, model, headBone, armBones = {}, morphMap = {}, morphLower = {};
-let faceLandmarker, poseLandmarker, video, running = false, idleMode = false, speaking = false, t = 0;
-let faceSeen = false, lastVideoTime = -1, lastFaceTime = 0, lastPoseTime = 0, errCount = 0, lastErr = '';
-const lerp = (a, b, k) => a + (b - a) * k;
+scene.add(new THREE.HemisphereLight(0xfff1d2,0x596477,2.0));
+const sun = new THREE.DirectionalLight(0xffe2ad,3.0);
+sun.position.set(-8,15,8); sun.castShadow=true; sun.shadow.mapSize.set(2048,2048);
+scene.add(sun);
 
-function buildScene() {
-  scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x16213e);
-  camera = new THREE.PerspectiveCamera(40, 16/9, 0.1, 100);
-  camera.position.set(0, 1.55, 2.2);
-  camera.lookAt(0, 1.45, 0);
-  renderer = new THREE.WebGLRenderer({ antialias: true });
-  document.getElementById('scene').prepend(renderer.domElement);
-  const resize = () => {
-    const el = document.getElementById('scene');
-    renderer.setSize(el.clientWidth, el.clientHeight);
-    renderer.setPixelRatio(window.devicePixelRatio);
-    camera.aspect = el.clientWidth / el.clientHeight;
-    camera.updateProjectionMatrix();
-  };
-  window.addEventListener('resize', resize); resize();
-  scene.add(new THREE.HemisphereLight(0xffffff, 0x334455, 1.1));
-  const dir = new THREE.DirectionalLight(0xffffff, 1.4);
-  dir.position.set(2, 4, 3); scene.add(dir);
+const mat=(color,roughness=.8)=>new THREE.MeshStandardMaterial({color,roughness});
+const marble=mat(0xe3d6bb), trim=mat(0xbca77f), floorMat=mat(0xcbbd9e), blue=mat(0x174c80), cloth=mat(0xf0e4cc), skin=mat(0xc99269), dark=mat(0x43362e), gold=mat(0xb89a52);
+function box(w,h,d,material,x,y,z, parent=scene) {
+ const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),material); m.position.set(x,y,z); m.castShadow=true; m.receiveShadow=true; parent.add(m); return m;
+}
+function cylinder(rt,rb,h,material,x,y,z,parent=scene,segments=24) {
+ const m=new THREE.Mesh(new THREE.CylinderGeometry(rt,rb,h,segments),material); m.position.set(x,y,z); m.castShadow=true; m.receiveShadow=true; parent.add(m); return m;
 }
 
-function setupAvatar(gltf) {
-  model = gltf.scene;
-  scene.add(model);
-  const morphNames = [];
-  model.traverse(o => {
-    if (o.isBone) {
-      if (o.name === 'Head') headBone = o;
-      if (o.name === 'LeftArm') armBones.L = o;
-      if (o.name === 'RightArm') armBones.R = o;
-    }
-    if (o.isMesh) {
-      o.frustumCulled = false;
-      if (o.morphTargetDictionary) {
-        for (const name in o.morphTargetDictionary) {
-          if (!(name in morphMap)) { morphMap[name] = []; morphNames.push(name); }
-          morphMap[name].push({ mesh: o, index: o.morphTargetDictionary[name] });
-        }
-      }
-    }
-  });
-  // Lookup: Kleinbuchstaben → Originalname (falls Morphnamen abweichen)
-  for (const name of Object.keys(morphMap)) morphLower[name.toLowerCase()] = name;
-  const hasJaw = 'jawopen' in morphLower;
-  console.log('Morph-Targets:', morphNames.join(', '));
-  console.log('Bones: Head=' + !!headBone + ' LeftArm=' + !!armBones.L + ' RightArm=' + !!armBones.R);
-  if (!hasJaw) setStatus('⚠️ Keine jawOpen-Blendshapes im GLB – Mimik geht nicht. Sketchfab-Export verliert oft die Formen. Original-GLB von readyplayer.me verwenden.', 'warn');
-  else if (!headBone) setStatus('⚠️ Kein "Head"-Knochen gefunden – Kopf-Rotation deaktiviert.', 'warn');
+// Courtyard floor and stone slabs
+box(70,.5,70,floorMat,0,-.3,0);
+for(let x=-30;x<=30;x+=3) for(let z=-25;z<=25;z+=3) {
+ const slab=box(2.92,.025,2.92,mat(((x+z)%2===0)?0xd9cbb0:0xcbbd9e),x,-.035,z);
+ slab.castShadow=false;
 }
 
-function setMorph(name, value) {
-  const list = morphMap[morphLower[name.toLowerCase()] || name];
-  if (!list) return;
-  for (const { mesh, index } of list) mesh.morphTargetInfluences[index] = value;
+// Distant hills and trees
+for(let i=0;i<9;i++){
+ const hill=new THREE.Mesh(new THREE.SphereGeometry(1,24,16),mat(i%2?0x66866e:0x819b79));
+ hill.scale.set(8,2.2,3); hill.position.set(-22+i*6,1.0,-25-(i%3)*2); scene.add(hill);
+}
+for(const [x,z,s] of [[-12,-7,1.2],[-16,-12,1],[-4,-18,1.3],[12,-15,1.1],[19,-8,1.3],[22,-18,.9]]) {
+ cylinder(.12,.22,2.8,dark,x,1.4,z);
+ const cone=new THREE.Mesh(new THREE.ConeGeometry(.75*s,3.7*s,8),mat(0x315743)); cone.position.set(x,3.6*s,z); cone.castShadow=true; scene.add(cone);
 }
 
-async function loadLandmarker(vision, fileset, kind, modelPath) {
-  // Erst GPU versuchen, bei Fehler auf CPU wechseln.
-  for (const delegate of ['GPU', 'CPU']) {
-    try {
-      const Landmarker = kind === 'face'
-        ? vision.FaceLandmarker
-        : vision.PoseLandmarker;
-
-      return await Landmarker.createFromOptions(fileset, {
-        baseOptions: {
-          modelAssetPath: modelPath,
-          delegate: delegate
-        },
-
-        // Wichtig: detectForVideo() benötigt den Videomodus!
-        runningMode: 'VIDEO',
-
-        // Einstellungen für die Erkennung
-        numFaces: 1,
-        numPoses: 1,
-
-        // Gesichtsausgabe
-        outputFaceBlendshapes: kind === 'face',
-        outputFacialTransformationMatrixes: kind === 'face'
-      });
-
-    } catch (e) {
-      console.warn(
-        kind + ' mit ' + delegate + ' fehlgeschlagen:',
-        e
-      );
-
-      if (delegate === 'CPU') {
-        throw e;
-      }
-    }
-  }
+// Columns lining the courtyard
+for(const z of [-10,-5,0,5,10]){
+ for(const x of [-11,11]){
+   cylinder(.62,.72,5.2,marble,x,2.6,z);
+   cylinder(.82,.82,.28,trim,x,5.25,z);
+   cylinder(.85,.85,.22,trim,x,.12,z);
+   box(1.7,.22,1.7,trim,x,5.5,z);
+ }
 }
+box(24,.45,1.2,trim,0,5.7,-10);
+box(24,.4,1.1,marble,0,5.35,-10);
 
-async function startWebcam() {
-  buildScene();
-  setStatus('Lade Avatar (harry.glb, ~8 MB)…');
-  let gltf;
-  try { gltf = await new GLTFLoader().loadAsync(AVATAR_URL); }
-  catch (e) { setStatus('❌ Avatar nicht geladen: ' + e.message, 'err'); return; }
-  setupAvatar(gltf);
+// Main display wall facing the courtyard, on z=-9
+box(12,7,.65,marble,0,3.55,-9.1);
+box(11.5,6.5,.12,dark,0,3.55,-8.72);
+box(11.25,6.25,.12,trim,0,3.55,-8.62);
+box(11.05,6.05,.10,mat(0xddd0b6),0,3.55,-8.54);
 
-  setStatus('Lade KI-Modelle…');
-  const vision = await import('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs');
-  const fileset = await vision.FilesetResolver.forVisionTasks('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm');
-  faceLandmarker = await loadLandmarker(vision, fileset, 'face', 'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task');
-  poseLandmarker = await loadLandmarker(vision, fileset, 'pose', 'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task');
+// Canvas texture for numbers board
+const boardCanvas=document.createElement('canvas'); boardCanvas.width=1100; boardCanvas.height=600;
+const ctx=boardCanvas.getContext('2d');
+const boardTex=new THREE.CanvasTexture(boardCanvas); boardTex.colorSpace=THREE.SRGBColorSpace;
+const boardMat=new THREE.MeshBasicMaterial({map:boardTex});
+const boardMesh=new THREE.Mesh(new THREE.PlaneGeometry(10.9,5.95),boardMat);
+boardMesh.position.set(0,3.55,-8.47); scene.add(boardMesh);
 
-  setStatus('Starte Webcam…');
-  video = document.getElementById('video');
-  video.srcObject = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 }, audio: false });
-  await video.play();
-  await new Promise(r => { video.readyState >= 2 ? r() : video.onloadeddata = r; });
-  running = true;
-  document.getElementById('speakBtn').disabled = false;
-  document.getElementById('idleBtn').disabled = false;
-  setStatus('✅ Läuft! Schau in die Kamera, bewege den Kopf.', 'ok');
-  requestAnimationFrame(animate);
-}
+box(11.4,.55,.2,trim,0,6.9,-8.48);
+const titleCanvas=document.createElement('canvas'); titleCanvas.width=1100; titleCanvas.height=100;
+const tc=titleCanvas.getContext('2d'); tc.fillStyle='#253c50';tc.fillRect(0,0,1100,100);
+tc.fillStyle='#f4dfad';tc.font='bold 44px Georgia';tc.textAlign='center';tc.fillText('DAS SIEB DES ERATOSTHENES',550,64);
+const titleTex=new THREE.CanvasTexture(titleCanvas);titleTex.colorSpace=THREE.SRGBColorSpace;
+const titleMesh=new THREE.Mesh(new THREE.PlaneGeometry(10.9,.5),new THREE.MeshBasicMaterial({map:titleTex}));
+titleMesh.position.set(0,6.9,-8.35);scene.add(titleMesh);
 
-const rot = { x: 0, y: 0, z: 0 };
-function applyFace(res) {
-  if (res.faceBlendshapes && res.faceBlendshapes.length) {
-    faceSeen = true; lastFaceTime = t;
-    for (const cat of res.faceBlendshapes[0].categories) setMorph(cat.categoryName, cat.score);
-  }
-  if (res.facialTransformationMatrixes && res.facialTransformationMatrixes.length && headBone) {
-    const mat = new THREE.Matrix4().fromArray(res.facialTransformationMatrixes[0].data);
-    const e = new THREE.Euler().setFromRotationMatrix(mat);
-    rot.x = lerp(rot.x, e.x, 0.25);
-    rot.y = lerp(rot.y, -e.y, 0.25);
-    rot.z = lerp(rot.z, e.z, 0.25);
-    headBone.rotation.x = rot.x * 0.6;
-    headBone.rotation.y = rot.y * 0.9;
-    headBone.rotation.z = rot.z * 0.5;
-  }
-}
+// Scholar built from simple shapes
+const scholar=new THREE.Group(); scene.add(scholar);
+const body=new THREE.Group();scholar.add(body);
+cylinder(.52,.65,1.45,cloth,0,1.65,0,body);
+const toga=new THREE.Mesh(new THREE.ConeGeometry(.7,1.35,24),blue);toga.position.set(.12,1.55,.02);toga.castShadow=true;body.add(toga);
+const head=new THREE.Mesh(new THREE.SphereGeometry(.32,24,20),skin);head.position.set(0,2.65,0);head.castShadow=true;body.add(head);
+const hair=new THREE.Mesh(new THREE.SphereGeometry(.34,20,12,0,Math.PI*2,0,Math.PI*.65),mat(0xd7d4c8));hair.position.set(0,2.76,-.01);body.add(hair);
+const beard=new THREE.Mesh(new THREE.ConeGeometry(.22,.52,16),mat(0xd7d4c8));beard.position.set(0,2.37,.18);beard.rotation.x=-.18;body.add(beard);
+const nose=box(.1,.16,.12,skin,0,2.62,.31,body);
+const eyesMat=mat(0x29251f);
+for(const x of [-.12,.12]){const eye=new THREE.Mesh(new THREE.SphereGeometry(.035,10,8),eyesMat);eye.position.set(x,2.69,.28);body.add(eye);}
+const leftArm=new THREE.Group();leftArm.position.set(-.47,2.15,0);body.add(leftArm);
+cylinder(.13,.16,.82,cloth,0,-.38,0,leftArm).rotation.z=-.45;
+const leftHand=new THREE.Mesh(new THREE.SphereGeometry(.12,12,10),skin);leftHand.position.set(-.18,-.78,.02);leftArm.add(leftHand);
+const rightArm=new THREE.Group();rightArm.position.set(.47,2.15,0);body.add(rightArm);
+cylinder(.13,.16,.82,cloth,0,-.38,0,rightArm).rotation.z=.45;
+const rightHand=new THREE.Mesh(new THREE.SphereGeometry(.12,12,10),skin);rightHand.position.set(.18,-.78,.02);rightArm.add(rightHand);
+for(const x of [-.25,.25]){cylinder(.1,.12,.45,skin,x,.25,.03,body);}
+const sandals=mat(0x75543b);box(.3,.09,.52,sandals,-.25,.03,.13,body);box(.3,.09,.52,sandals,.25,.03,.13,body);
+scholar.position.set(0,0,1.7);
+scholar.rotation.y=0;
 
-function applyPose(res) {
-  if (!res.landmarks || !res.landmarks.length) return;
-  const lm = res.landmarks[0];
-  lastPoseTime = t;
-  function armBone(side, s, w) {
-    const bone = side === 'L' ? armBones.L : armBones.R;
-    if (!bone || (lm[w].visibility ?? 1) < 0.5) return;
-    const dx = lm[w].x - lm[s].x;
-    const dy = lm[w].y - lm[s].y;
-    const ang = Math.atan2(-dy, Math.abs(dx));
-    const sign = side === 'L' ? 1 : -1;
-    bone.rotation.z = lerp(bone.rotation.z, sign * Math.min(1.3, ang) * 1.1, 0.15);
-  }
-  armBone('L', 11, 15);
-  armBone('R', 12, 16);
-}
-
-function trackStep() {
-  // Nur auswerten, wenn ein NEUER Videoframe da ist – sonst wirft MediaPipe Fehler
-  if (video.currentTime === lastVideoTime || video.readyState < 2) return;
-  lastVideoTime = video.currentTime;
-  const now = performance.now();
-  try { applyFace(faceLandmarker.detectForVideo(video, now)); errCount = 0; }
-  catch (e) { errCount++; lastErr = 'Face: ' + e.message; console.error(e); }
-  try { applyPose(poseLandmarker.detectForVideo(video, now + 1)); }
-  catch (e) { errCount++; lastErr = 'Pose: ' + e.message; console.error(e); }
-  // Diagnose in der Statuszeile
-  if (errCount > 30) { setStatus('❌ Tracking-Fehler: ' + lastErr + ' (siehe Konsole F12)', 'err'); return; }
-  if (t - lastFaceTime > 2) setStatus('📷 Kamera läuft, aber kein Gesicht erkannt. Gut beleuchten, Gesicht mittig in die Kamera schauen.', 'warn');
-  else setStatus('✅ Gesicht erkannt – Kopf bewegen, Mund auf, Arme heben!' + (t - lastPoseTime > 2 ? ' (Pose schwach – Abstand halten)' : ''), 'ok');
-}
-
-function animate() {
-  if (!running) return;
-  t += 0.016;
-  if (idleMode) {
-    if (headBone) {
-      headBone.rotation.y = Math.sin(t * 0.8) * 0.4;
-      headBone.rotation.x = Math.sin(t * 0.5) * 0.12;
-    }
-    setMorph('jawOpen', 0.4 + 0.4 * Math.abs(Math.sin(t * 9)));
-    setMorph('mouthSmileLeft', 0.6); setMorph('mouthSmileRight', 0.6);
-    if (armBones.L) armBones.L.rotation.z = 0.6 + 0.25 * Math.sin(t * 2);
-    if (armBones.R) armBones.R.rotation.z = -0.6 - 0.25 * Math.sin(t * 2 + 1);
-  } else {
-    trackStep();
-  }
-  if (speaking) setMorph('jawOpen', Math.max(0.15, 0.5 * Math.abs(Math.sin(t * 14))));
-  renderer.render(scene, camera);
-  requestAnimationFrame(animate);
-}
-
-const lines = [
-  'Seid gegrüßt! Im rechtwinkligen Dreieck gilt: a Quadrat plus b Quadrat gleich c Quadrat.',
-  'Merkt euch: Die Hypotenuse ist immer die längste Seite, sie liegt dem rechten Winkel gegenüber.',
-  'Ein Beispiel: drei, vier, fünf. Drei Quadrat ist neun, vier Quadrat ist sechzehn, zusammen fünfundzwanzig – die Wurzel ist fünf!'
+// Sieve steps and logic
+const sieveSteps=[
+ {title:'Einführung',text:'Willkommen! Ich bin Eratosthenes. Gemeinsam entdecken wir die Primzahlen von 1 bis 100. Drücke die Leertaste, um zu beginnen.',say:'Willkommen! Gemeinsam entdecken wir die Primzahlen von eins bis hundert.'},
+ {title:'Schritt 1 · Die Eins',text:'Die 1 ist keine Primzahl: Sie hat nicht genau zwei positive Teiler. Wir markieren sie grau.',say:'Die Eins ist keine Primzahl. Eine Primzahl hat genau zwei positive Teiler.'},
+ {title:'Schritt 2 · Die Zwei',text:'Die 2 ist die kleinste und einzige gerade Primzahl. Alle weiteren Vielfachen von 2 sind keine Primzahlen und werden rot markiert.',say:'Die Zwei ist die kleinste Primzahl und die einzige gerade Primzahl. Alle Vielfachen von 2 sind keine Primzahlen.'},
+ {title:'Schritt 3 · Die Drei',text:'Die nächste noch nicht markierte Zahl ist 3. Sie ist prim. Markiere ihre Vielfachen 6, 9, 12 und so weiter.',say:'Die nächste unmarkierte Zahl ist drei. Sie ist prim. Ihre Vielfachen werden rot markiert.'},
+ {title:'Schritt 4 · Die Fünf',text:'Die nächste unmarkierte Zahl ist 5. Markiere ihre Vielfachen, soweit sie nicht schon markiert sind.',say:'Nun kommt die fünf. Markiere ihre Vielfachen.'},
+ {title:'Schritt 5 · Die Sieben',text:'Die nächste unmarkierte Zahl ist 7. Auch ihre Vielfachen werden markiert.',say:'Jetzt die sieben. Da die Quadratwurzel von hundert zehn ist, reichen die Primzahlen zwei, drei, fünf und sieben.'},
+ {title:'Fertig · Die Primzahlen',text:'Geschafft! Alle nicht markierten Zahlen größer als 1 sind Primzahlen. Es gibt genau 25 Primzahlen bis 100.',say:'Geschafft! Die grün markierten Zahlen sind die fünfundzwanzig Primzahlen bis hundert.'}
 ];
-let lineIdx = 0;
-function speak() {
-  if (!('speechSynthesis' in window)) { setStatus('Dein Browser unterstützt keine Sprachausgabe.', 'warn'); return; }
-  speaking = true;
-  const u = new SpeechSynthesisUtterance(lines[lineIdx % lines.length]);
-  lineIdx++;
-  u.lang = 'de-DE'; u.rate = 0.95;
-  u.onend = () => { speaking = false; setMorph('jawOpen', 0); };
-  speechSynthesis.speak(u);
+let stepIndex=0;
+const primeSet=new Set([2,3,5,7,11,13,17,19,23,29,31,37,41,43,47,53,59,61,67,71,73,79,83,89,97]);
+let crossed=new Set();
+
+function redrawBoard(){
+ ctx.clearRect(0,0,1100,600);
+ ctx.fillStyle='#d8c9ac';ctx.fillRect(0,0,1100,600);
+ const margin=12,gap=5,cw=(1100-margin*2-gap*9)/10,ch=(600-margin*2-gap*9)/10;
+ for(let n=1;n<=100;n++){
+  const i=n-1,row=Math.floor(i/10),col=i%10,x=margin+col*(cw+gap),y=margin+row*(ch+gap);
+  let fill='#e5d8bf';
+  if(n===1)fill='#92918b';
+  else if(crossed.has(n))fill='#bd6656';
+  else if(stepIndex>=2 && primeSet.has(n))fill='#9bc58a';
+  if(stepIndex>=2 && [2,3,5,7].includes(n) && n<=({2:2,3:3,4:5,5:7,6:7}[stepIndex]||0)) fill='#65bd77';
+  ctx.fillStyle=fill;ctx.fillRect(x,y,cw,ch);
+  ctx.strokeStyle='#8d8069';ctx.lineWidth=2;ctx.strokeRect(x,y,cw,ch);
+  ctx.fillStyle='#202c35';ctx.font='bold 31px Georgia';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(String(n),x+cw/2,y+ch/2);
+ }
+ boardTex.needsUpdate=true;
 }
 
-document.getElementById('startBtn').onclick = e => { e.target.disabled = true; startWebcam().catch(err => { console.error(err); setStatus('❌ ' + err.message, 'err'); }); };
-document.getElementById('speakBtn').onclick = speak;
-document.getElementById('idleBtn').onclick = e => {
-  idleMode = !idleMode;
-  e.target.textContent = idleMode ? '🎥 Webcam-Steuerung' : '🕺 Demo-Modus';
-  if (!idleMode) setStatus('Webcam-Steuerung aktiv. Schau in die Kamera.', 'ok');
+function applyStep(){
+ if(stepIndex===0){stepIndex=1;crossed.add(1);}
+ else if(stepIndex===1){stepIndex=2;for(let n=4;n<=100;n+=2)crossed.add(n);}
+ else if(stepIndex===2){stepIndex=3;for(let n=6;n<=100;n+=3)if(![3].includes(n))crossed.add(n);}
+ else if(stepIndex===3){stepIndex=4;for(let n=10;n<=100;n+=5)if(![5].includes(n))crossed.add(n);}
+ else if(stepIndex===4){stepIndex=5;for(let n=14;n<=100;n+=7)if(![7].includes(n))crossed.add(n);}
+ else {stepIndex=6;}
+ updateLesson();
+}
+function updateLesson(){
+ const s=sieveSteps[stepIndex];
+ document.getElementById('message').textContent=s.text;
+ redrawBoard();
+}
+function resetSieve(){stepIndex=0;crossed.clear();updateLesson();}
+redrawBoard();updateLesson();
+
+// First-person mouse look & player movement
+const keys=new Set();let yaw=0,pitch=-.08,pointerLocked=false;
+const player={x:0,z:3.5};
+document.addEventListener('keydown',e=>{keys.add(e.code);if(e.code==='Space'&&!e.repeat){e.preventDefault();applyStep();}if(e.code==='KeyR')resetSieve();if(e.code==='KeyE')speakLesson();});
+document.addEventListener('keyup',e=>keys.delete(e.code));
+document.getElementById('next').onclick=applyStep;
+document.getElementById('reset').onclick=resetSieve;
+
+function speakLesson(){
+ if(!('speechSynthesis' in window))return;
+ speechSynthesis.cancel();
+ const u=new SpeechSynthesisUtterance(sieveSteps[stepIndex].say);u.lang='de-DE';u.rate=.92;speechSynthesis.speak(u);
+}
+document.getElementById('speak').onclick=speakLesson;
+
+// Webcam & MediaPipe Integration
+const videoElement=document.getElementById('webcam-video');
+let webcamActive=false;
+let headRotationTarget={yaw:0,pitch:0};
+
+const faceMesh=new FaceMesh({locateFile:(file)=>`https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`});
+faceMesh.setOptions({maxNumFaces:1,refineLandmarks:true,minDetectionConfidence:0.5,minTrackingConfidence:0.5});
+faceMesh.onResults(results=>{
+ if(results.multiFaceLandmarks && results.multiFaceLandmarks.length>0){
+  const lm=results.multiFaceLandmarks[0];
+  const nosePoint=lm[1], leftEar=lm[234], rightEar=lm[454];
+  const dx=rightEar.x-leftEar.x;
+  headRotationTarget.yaw=(nosePoint.x-(leftEar.x+rightEar.x)/2)/dx*1.2;
+  headRotationTarget.pitch=(nosePoint.y-(leftEar.y+rightEar.y)/2)*1.0;
+ }
+});
+
+const cameraUtils=new Camera(videoElement,{
+ onFrame:async()=>{if(webcamActive)await faceMesh.send({image:videoElement});},
+ width:320, height:240
+});
+
+document.getElementById('toggle-cam').onclick=async()=>{
+ webcamActive=!webcamActive;
+ if(webcamActive){
+  try{
+   await cameraUtils.start();
+   document.getElementById('stat-text').textContent='Webcam aktiv';
+   document.getElementById('toggle-cam').textContent='Stoppen';
+  }catch(e){
+   webcamActive=false;
+   document.getElementById('stat-text').textContent='Fehler beim Start';
+  }
+ }else{
+  cameraUtils.stop();
+  document.getElementById('stat-text').textContent='Webcam gestoppt';
+  document.getElementById('toggle-cam').textContent='Starten';
+ }
 };
-setStatus('Bereit. "Webcam starten" klicken – läuft lokal oder via GitHub Pages (HTTPS nötig für Kamera).');
+
+// Responsive resize
+addEventListener('resize',()=>{camera3D.aspect=innerWidth/innerHeight;camera3D.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight);});
+
+const clock=new THREE.Clock();
+function animate(){
+ requestAnimationFrame(animate);
+ const dt=Math.min(clock.getDelta(),.04);
+ const forward=(keys.has('KeyW')||keys.has('ArrowUp')?1:0)-(keys.has('KeyS')||keys.has('ArrowDown')?1:0);
+ const side=(keys.has('KeyD')?1:0)-(keys.has('KeyA')?1:0);
+ const speed=(keys.has('ShiftLeft')?6:3.4)*dt;
+ const dir=new THREE.Vector3(Math.sin(yaw),0,Math.cos(yaw));
+ const right=new THREE.Vector3(Math.cos(yaw),0,-Math.sin(yaw));
+ player.x+=dir.x*forward*speed+right.x*side*speed;
+ player.z+=dir.z*forward*speed+right.z*side*speed;
+ player.x=THREE.MathUtils.clamp(player.x,-9.2,9.2);
+ player.z=THREE.MathUtils.clamp(player.z,-7.3,13);
+
+ scholar.position.x=player.x; scholar.position.z=player.z;
+ if(webcamActive){
+  head.rotation.y=THREE.MathUtils.damp(head.rotation.y,headRotationTarget.yaw,8,dt);
+  head.rotation.x=THREE.MathUtils.damp(head.rotation.x,headRotationTarget.pitch,8,dt);
+ } else {
+  const now=performance.now()*.001;
+  head.rotation.y=Math.sin(now*.8)*.15;
+  head.rotation.x=Math.cos(now*.5)*.08;
+  leftArm.rotation.z=.10+Math.sin(now*1.2)*.08;
+  rightArm.rotation.z=-.20+Math.sin(now*1.5+1)*.16;
+ }
+
+ const back=new THREE.Vector3(-Math.sin(yaw),0,-Math.cos(yaw));
+ const target=new THREE.Vector3(player.x,2.1,player.z);
+ const desired=target.clone().add(back.multiplyScalar(5.2)).add(new THREE.Vector3(0,2.0+pitch*2,0));
+ camera3D.position.lerp(desired,1-Math.exp(-5*dt));
+ camera3D.lookAt(new THREE.Vector3(player.x+Math.sin(yaw)*3,1.8+pitch*3,player.z+Math.cos(yaw)*3));
+
+ renderer.render(scene,camera3D);
+}
+animate();
 </script>
 </body>
 </html>
