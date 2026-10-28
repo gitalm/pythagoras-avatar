@@ -19,7 +19,7 @@
   #webcam-panel { position:absolute; left:16px; bottom:16px; width:290px; font-size:12px; }
   #webcam-container { width:100%; height:150px; background:#000; border-radius:8px; overflow:hidden; margin-top:6px; }
   #webcam-video { width:100%; height:100%; object-fit:cover; transform:scaleX(-1); }
-  #cam-status { margin-top:6px; font-size:11px; color:#a8e6b0; min-height:30px; }
+  #cam-status { margin-top:6px; font-size:11px; color:#a8e6b0; min-height:30px; word-break:break-word; }
   #hint { position:absolute; right:16px; top:16px; width:290px; font-size:12px; line-height:1.5; color:#d6e0e9; }
   #hint strong { color:#f3d89b; display:block; margin-bottom:4px; }
   #hint ol { margin:0; padding-left:18px; } #hint li { margin-bottom:3px; }
@@ -30,12 +30,19 @@
   #hover { margin-top:6px; font-size:12px; color:#a8d0f0; min-height:16px; }
   .btn { border:1px solid #b69a61; background:#253d56; color:#fff5dc; border-radius:7px; padding:8px 12px; cursor:pointer; font-size:13px; pointer-events:auto; }
   .btn:hover { background:#365574; }
-  #loading { position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); font-size:15px; }
+  #loadbox { position:absolute; left:50%; top:42%; transform:translate(-50%,-50%); width:min(380px,90vw); text-align:center; }
+  #loadtext { font-size:14px; margin-bottom:8px; word-break:break-word; }
+  #bar { height:8px; background:#2a3a50; border-radius:4px; overflow:hidden; }
+  #barfill { height:100%; width:0%; background:#f3d89b; transition:width .2s; }
   @media(max-width:1100px){ #hint{display:none} #bottom{right:16px} }
   @media(max-width:760px){ #bottom{left:16px; bottom:200px} #help{display:none} }
 </style>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+<!-- Alle Bibliotheken von jsdelivr -->
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/DRACOLoader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/libs/meshopt_decoder.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
 </head>
 <body>
@@ -73,7 +80,10 @@
     <div style="margin-top:8px;font-size:11px;color:#bba882">Bis 100 genügen die Primzahlen bis √100 = 10: 2, 3, 5, 7.</div>
   </section>
 
-  <div id="loading">Avatar wird geladen …</div>
+  <div id="loadbox" class="panel">
+    <div id="loadtext">Starte …</div>
+    <div id="bar"><div id="barfill"></div></div>
+  </div>
 
   <div id="bottom">
     <div id="message-box" class="panel">
@@ -87,15 +97,34 @@
 </div>
 
 <script>
+// ---------- Fehleranzeige ----------
+const $ = id => document.getElementById(id);
+function showLoad(text, pct){
+  $('loadbox').style.display='block';
+  $('loadtext').textContent=text;
+  if(pct!==undefined) $('barfill').style.width=pct+'%';
+}
+function hideLoad(){ $('loadbox').style.display='none'; }
+window.addEventListener('error', e=>{
+  const src = e.target && (e.target.src||e.target.href);
+  showLoad(src ? 'Konnte nicht geladen werden: '+src : 'Fehler: '+(e.message||'unbekannt'));
+}, true);
+window.addEventListener('unhandledrejection', e=>{
+  $('cam-status').textContent='Fehler: '+(e.reason && (e.reason.message||e.reason));
+});
+if (typeof THREE==='undefined' || !THREE.GLTFLoader) {
+  showLoad('Three.js bzw. GLTFLoader wurde nicht geladen. Blockiert ein Filter cdn.jsdelivr.net? Prüfe Netzwerk/Filter und lade neu.');
+  throw new Error('THREE fehlt');
+}
+
 // ================= Grundaufbau =================
-const AVATAR_HEIGHT = 3.2;   // Höhe des Avatars in Szeneneinheiten
+const AVATAR_HEIGHT = 3.2;
 const GLB_URLS = [
-  'harry.glb',  // lokal neben der index.html (falls vorhanden)
+  'harry.glb',
   'https://raw.githubusercontent.com/gitalm/pythagoras-avatar/tipp/ready-player-me-harry-potter/source/harry.glb'
 ];
-const $ = id => document.getElementById(id);
 const clamp = THREE.MathUtils.clamp;
-const damp = (a,b,lambda,dt) => a + (b-a)*(1-Math.exp(-lambda*dt)); // eigene damp-Funktion (r128 hat keine)
+const damp = (a,b,lambda,dt) => a + (b-a)*(1-Math.exp(-lambda*dt));
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x8ab5d8);
@@ -125,7 +154,7 @@ function cyl(rt,rb,h,m,x,y,z,parent=scene){const o=new THREE.Mesh(new THREE.Cyli
 // Hof
 box(70,.5,70,floorMat,0,-.3,0);
 for(let x=-30;x<=30;x+=3) for(let z=-25;z<=25;z+=3){
-  const s=box(2.92,.025,2.92,mat(((x+z)/3)%2===0?0xd9cbb0:0xcbbd9e),x,-.035,z); s.castShadow=false;
+  const s=box(2.92,.025,2.92,mat((((x+z)/3)%2===0)?0xd9cbb0:0xcbbd9e),x,-.035,z); s.castShadow=false;
 }
 for(let i=0;i<9;i++){
   const h=new THREE.Mesh(new THREE.SphereGeometry(1,24,16),mat(i%2?0x66866e:0x819b79));
@@ -154,11 +183,9 @@ box(11.4,.55,.2,trim,0,7.0,-8.48);
   const c=document.createElement('canvas'); c.width=1100; c.height=100;
   const t=c.getContext('2d'); t.fillStyle='#253c50'; t.fillRect(0,0,1100,100);
   t.fillStyle='#f4dfad'; t.font='bold 44px Georgia'; t.textAlign='center'; t.fillText('DAS SIEB DES ERATOSTHENES',550,64);
-  const tex=new THREE.CanvasTexture(c);
-  const m=new THREE.Mesh(new THREE.PlaneGeometry(10.9,.5),new THREE.MeshBasicMaterial({map:tex}));
+  const m=new THREE.Mesh(new THREE.PlaneGeometry(10.9,.5),new THREE.MeshBasicMaterial({map:new THREE.CanvasTexture(c)}));
   m.position.set(0,7.0,-8.36); scene.add(m);
 }
-// Laserpunkt
 const laser=new THREE.Mesh(new THREE.SphereGeometry(.09,16,12),new THREE.MeshBasicMaterial({color:0xff3030}));
 laser.visible=false; scene.add(laser);
 
@@ -195,7 +222,7 @@ function redrawBoard(){
 }
 function updateLesson(){ $('message').textContent=steps[stepIndex].t; redrawBoard(); }
 function applyStep(){
-  const mark=(p)=>{for(let n=p*2;n<=100;n+=p)crossed.add(n);};
+  const mark=p=>{for(let n=p*2;n<=100;n+=p)crossed.add(n);};
   if(stepIndex===0) crossed.add(1);
   else if(stepIndex===1) mark(2);
   else if(stepIndex===2) mark(3);
@@ -207,7 +234,6 @@ function applyStep(){
 function resetSieve(){ stepIndex=0; crossed.clear(); updateLesson(); }
 updateLesson();
 
-// Sprachausgabe (mit Lippenbewegung)
 let speaking=false;
 function speak(){
   if(!('speechSynthesis' in window)) return;
@@ -222,31 +248,40 @@ $('next').onclick=applyStep; $('speak').onclick=speak;
 const avatarRoot=new THREE.Group(); scene.add(avatarRoot);
 avatarRoot.position.set(6.5,0,-1);
 const modelHolder=new THREE.Group(); avatarRoot.add(modelHolder);
-
-const bones={}; const restQ={}; const smoothQ={};
-const morphMeshes=[]; let morphCount=0;
-let hasModel=false;
+const bones={}, restQ={}, smoothQ={};
+const morphMeshes=[]; let morphCount=0, hasModel=false, fallbackBuilt=false;
 
 function buildFallback(){
+  if(fallbackBuilt||hasModel) return; fallbackBuilt=true;
   const b=mat(0x174c80), s=mat(0xc99269);
   cyl(.35,.5,1.5,b,0,1.2,0,modelHolder);
   const h=new THREE.Mesh(new THREE.SphereGeometry(.32,20,16),s); h.position.y=2.3; h.castShadow=true; modelHolder.add(h);
   const hair=new THREE.Mesh(new THREE.SphereGeometry(.34,16,12,0,Math.PI*2,0,Math.PI*.6),mat(0x2b1d0c)); hair.position.y=2.35; modelHolder.add(hair);
 }
-function loadAvatar(i=0){
-  if(i>=GLB_URLS.length){
-    buildFallback(); $('loading').textContent='Avatar konnte nicht geladen werden – Ersatzfigur aktiv.';
-    setTimeout(()=>$('loading').style.display='none',4000); return;
+function makeLoader(){
+  const l=new THREE.GLTFLoader();
+  if(THREE.DRACOLoader){
+    const d=new THREE.DRACOLoader();
+    d.setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.4.1/');
+    l.setDRACOLoader(d);
   }
-  new THREE.GLTFLoader().load(GLB_URLS[i], gltf=>{
+  if(window.MeshoptDecoder) l.setMeshoptDecoder(window.MeshoptDecoder);
+  return l;
+}
+function loadAvatar(i=0,lastErr=''){
+  if(i>=GLB_URLS.length){
+    buildFallback();
+    showLoad('Avatar nicht ladbar – Ersatzfigur aktiv. '+lastErr,100);
+    setTimeout(hideLoad,8000); return;
+  }
+  showLoad('Avatar wird geladen … ('+GLB_URLS[i].split('/').pop()+')',0);
+  makeLoader().load(GLB_URLS[i], gltf=>{
+    if(fallbackBuilt){ while(modelHolder.children.length) modelHolder.remove(modelHolder.children[0]); }
     const model=gltf.scene;
-    // Auf Zielhöhe skalieren, Füße auf den Boden
     const bb=new THREE.Box3().setFromObject(model);
-    const sc=AVATAR_HEIGHT/(bb.max.y-bb.min.y);
-    model.scale.setScalar(sc);
+    model.scale.setScalar(AVATAR_HEIGHT/(bb.max.y-bb.min.y));
     model.updateMatrixWorld(true);
-    const bb2=new THREE.Box3().setFromObject(model);
-    model.position.y-=bb2.min.y;
+    model.position.y-=new THREE.Box3().setFromObject(model).min.y;
     modelHolder.add(model);
     model.traverse(o=>{
       if(o.isMesh){ o.castShadow=true; o.receiveShadow=true; o.frustumCulled=false;
@@ -254,19 +289,20 @@ function loadAvatar(i=0){
       if(o.isBone){ const n=o.name.replace(/^mixamorig:?/,''); if(!bones[n]) bones[n]=o; }
     });
     for(const n in bones){ restQ[n]=bones[n].quaternion.clone(); smoothQ[n]=bones[n].quaternion.clone(); }
-    hasModel=true;
-    $('loading').style.display='none';
-    $('cam-status').textContent=`Avatar geladen · ${morphCount} Morph Targets für Mimik · Knochen: ${Object.keys(bones).length}`;
-  }, undefined, err=>{ console.warn('GLB-Laden fehlgeschlagen:',GLB_URLS[i],err); loadAvatar(i+1); });
+    hasModel=true; hideLoad();
+    $('cam-status').textContent=`Avatar geladen · ${morphCount} Morph Targets · ${Object.keys(bones).length} Knochen`;
+  },
+  xhr=>{ if(xhr.total){ const p=Math.round(xhr.loaded/xhr.total*100); showLoad('Avatar wird geladen … '+p+' %',p); } },
+  err=>{ console.warn('GLB-Fehler',GLB_URLS[i],err); loadAvatar(i+1,String(err&&(err.message||err.type||err))); });
 }
 loadAvatar();
+// Falls das Laden hängt: nach 25 s Ersatzfigur zeigen (Szene bleibt bedienbar)
+setTimeout(()=>{ if(!hasModel){ buildFallback(); showLoad('Avatar lädt noch (8 MB) – bis dahin Ersatzfigur …'); } },25000);
 
-// ---- Hilfsfunktionen für Knochen (arbeitet in Weltkoordinaten, unabhängig von der Bone-Ausrichtung) ----
+// ---- Knochen-Hilfsfunktionen ----
 const _q1=new THREE.Quaternion(), _q2=new THREE.Quaternion(), _q3=new THREE.Quaternion(), _v1=new THREE.Vector3(), _v2=new THREE.Vector3();
 function resetBones(){ for(const n in restQ) bones[n].quaternion.copy(restQ[n]); modelHolder.updateMatrixWorld(true); }
 function setSmoothed(name,targetLocal,k){ smoothQ[name].slerp(targetLocal,k); bones[name].quaternion.copy(smoothQ[name]); bones[name].updateWorldMatrix(true,true); }
-
-// Knochen so drehen, dass die Strecke bone→child in Richtung dirWorld zeigt
 function aimBone(name,childName,dirWorld,k){
   const b=bones[name], c=bones[childName]; if(!b||!c) return;
   b.updateWorldMatrix(true,true);
@@ -276,34 +312,28 @@ function aimBone(name,childName,dirWorld,k){
   const bw=b.getWorldQuaternion(_q2);
   const newWorld=_q3.copy(delta).multiply(bw);
   const pw=b.parent.getWorldQuaternion(new THREE.Quaternion());
-  const local=pw.invert().multiply(newWorld);
-  setSmoothed(name,local,k);
+  setSmoothed(name,pw.invert().multiply(newWorld),k);
 }
-// Knochen im Avatar-Koordinatensystem um Euler drehen (x=nicken, y=drehen, z=neigen)
 function rotateBone(name,euler,k){
   const b=bones[name]; if(!b) return;
   const A=avatarRoot.getWorldQuaternion(new THREE.Quaternion());
   const E=new THREE.Quaternion().setFromEuler(euler);
   const D=A.clone().multiply(E).multiply(A.clone().invert());
   const pw=b.parent.getWorldQuaternion(new THREE.Quaternion());
-  const restWorld=pw.clone().multiply(restQ[name]);
-  const newWorld=D.multiply(restWorld);
-  const local=pw.invert().multiply(newWorld);
-  setSmoothed(name,local,k);
+  const newWorld=D.multiply(pw.clone().multiply(restQ[name]));
+  setSmoothed(name,pw.invert().multiply(newWorld),k);
 }
 function setMorph(name,value){
   for(const m of morphMeshes){ const i=m.morphTargetDictionary[name]; if(i!==undefined) m.morphTargetInfluences[i]=value; }
 }
 
-// ================= Cursor ("Fernbedienung") =================
+// ================= Cursor als Fernbedienung =================
 const mouse=new THREE.Vector2(0,0); let mouseSeen=false;
 const raycaster=new THREE.Raycaster();
 const boardPlane=new THREE.Plane(new THREE.Vector3(0,0,1),-BOARD_Z);
 const cursorPoint=new THREE.Vector3(0,3.5,BOARD_Z);
 let pointingAtBoard=false;
-addEventListener('mousemove',e=>{
-  mouse.set(e.clientX/innerWidth*2-1,-(e.clientY/innerHeight)*2+1); mouseSeen=true;
-});
+addEventListener('mousemove',e=>{ mouse.set(e.clientX/innerWidth*2-1,-(e.clientY/innerHeight)*2+1); mouseSeen=true; });
 function updateCursor(){
   raycaster.setFromCamera(mouse,camera);
   const hit=raycaster.ray.intersectPlane(boardPlane,new THREE.Vector3());
@@ -321,16 +351,158 @@ function updateCursor(){
   if(pointingAtBoard) laser.position.set(cursorPoint.x,cursorPoint.y,BOARD_Z+.05);
 }
 let lastHover=-1;
+const smallPrimes=[2,3,5,7,11,13,17,19,23,29,31,37,41,43,47];
 function updateHoverText(){
   if(hoverNum===lastHover) return; lastHover=hoverNum; redrawBoard();
   if(!hoverNum){ $('hover').textContent=''; return; }
   const n=hoverNum;
-  $('hover').textContent = n===1 ? '1: keine Primzahl.' :
-    primes.has(n) ? `${n} ist eine Primzahl.` :
-    `${n} ist zusammengesetzt, z. B. ${n} = ${[2,3,5,7,11,13,17,19,23,29,31,37,41,43,47].find(p=>n%p===0)} · ${n/[2,3,5,7,11,13,17,19,23,29,31,37,41,43,47].find(p=>n%p===0)}.`;
+  if(n===1) $('hover').textContent='1: keine Primzahl.';
+  else if(primes.has(n)) $('hover').textContent=`${n} ist eine Primzahl.`;
+  else { const p=smallPrimes.find(q=>n%q===0); $('hover').textContent=`${n} ist zusammengesetzt: ${n} = ${p} · ${n/p}.`; }
 }
 
 // ================= Webcam + Mimik =================
 const video=$('webcam-video');
 const face={yaw:0,pitch:0,roll:0,jaw:0,smile:0,blinkL:0,blinkR:0};
-const faceT={yaw:0,pitch:0,roll:0,jaw:0,smile:0,blink
+const faceT={yaw:0,pitch:0,roll:0,jaw:0,smile:0,blinkL:0,blinkR:0};
+let camOn=false, stream=null, faceMesh=null, faceSeen=false;
+const YAW_SIGN=1, PITCH_SIGN=1, ROLL_SIGN=1; // bei falscher Richtung auf -1 setzen
+
+function onFace(results){
+  if(!results.multiFaceLandmarks||!results.multiFaceLandmarks.length){ faceSeen=false; return; }
+  faceSeen=true;
+  const lm=results.multiFaceLandmarks[0];
+  const d=(a,b)=>Math.hypot(lm[a].x-lm[b].x,lm[a].y-lm[b].y);
+  const faceW=d(234,454), faceH=d(10,152);
+  const midX=(lm[234].x+lm[454].x)/2;
+  faceT.yaw  = YAW_SIGN*clamp((lm[1].x-midX)/faceW*2.2,-1,1)*0.9;
+  const eyeMidY=(lm[33].y+lm[263].y)/2, mouthY=lm[13].y;
+  faceT.pitch= PITCH_SIGN*clamp(((lm[1].y-eyeMidY)/(mouthY-eyeMidY)-0.55)*2.2,-.7,.7);
+  faceT.roll = ROLL_SIGN*clamp(-Math.atan2(lm[263].y-lm[33].y,lm[263].x-lm[33].x),-.6,.6);
+  faceT.jaw  = clamp((d(13,14)/faceH-0.015)/0.09,0,1);
+  faceT.smile= clamp((d(61,291)/faceW-0.40)/0.10,0,1);
+  const eyeR=d(159,145)/d(33,133), eyeL=d(386,374)/d(362,263);
+  faceT.blinkR=clamp(1-(eyeR-0.11)/0.14,0,1);
+  faceT.blinkL=clamp(1-(eyeL-0.11)/0.14,0,1);
+}
+async function trackLoop(){
+  if(!camOn) return;
+  if(video.readyState>=2){ try{ await faceMesh.send({image:video}); }catch(e){ console.warn(e); } }
+  requestAnimationFrame(trackLoop);
+}
+async function startCam(){
+  const st=$('cam-status');
+  try{
+    if(typeof FaceMesh==='undefined') throw new Error('MediaPipe wurde nicht geladen (Filter?).');
+    if(!navigator.mediaDevices?.getUserMedia) throw new Error('Kamera-API nicht verfügbar – bitte über https oder http://localhost öffnen.');
+    st.textContent='Kamera wird angefragt …';
+    stream=await navigator.mediaDevices.getUserMedia({video:{width:640,height:480,facingMode:'user'},audio:false});
+    video.srcObject=stream; await video.play();
+    if(!faceMesh){
+      st.textContent='Gesichtsmodell wird geladen …';
+      faceMesh=new FaceMesh({locateFile:f=>`https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${f}`});
+      faceMesh.setOptions({maxNumFaces:1,refineLandmarks:true,minDetectionConfidence:.5,minTrackingConfidence:.5});
+      faceMesh.onResults(onFace);
+      await faceMesh.initialize();
+    }
+    camOn=true; $('toggle-cam').textContent='⏹ Webcam stoppen';
+    st.textContent='Webcam aktiv – bewege Kopf und Gesicht!'; trackLoop();
+  }catch(e){
+    console.error(e); camOn=false; st.textContent='Fehler: '+(e.message||e.name||e);
+  }
+}
+function stopCam(){
+  camOn=false; stream?.getTracks().forEach(t=>t.stop()); video.srcObject=null;
+  $('toggle-cam').textContent='▶ Webcam starten'; $('cam-status').textContent='Webcam aus.';
+  for(const k in faceT) faceT[k]=0;
+}
+$('toggle-cam').onclick=()=>camOn?stopCam():startCam();
+
+// ================= Tasten =================
+const keys=new Set();
+addEventListener('keydown',e=>{
+  keys.add(e.code);
+  if(e.code==='Space'){ e.preventDefault(); if(!e.repeat) applyStep(); }
+  if(e.code==='KeyR') resetSieve();
+  if(e.code==='KeyE') speak();
+});
+addEventListener('keyup',e=>keys.delete(e.code));
+addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight);});
+
+// ================= Animationsschleife =================
+const clock=new THREE.Clock();
+let facing=0, walkPhase=0;
+function animate(){
+  requestAnimationFrame(animate);
+  const dt=Math.min(clock.getDelta(),.05), t=clock.elapsedTime;
+
+  const mx=(keys.has('KeyD')||keys.has('ArrowRight')?1:0)-(keys.has('KeyA')||keys.has('ArrowLeft')?1:0);
+  const mz=(keys.has('KeyS')||keys.has('ArrowDown')?1:0)-(keys.has('KeyW')||keys.has('ArrowUp')?1:0);
+  const moving=mx||mz;
+  if(moving){
+    const len=Math.hypot(mx,mz), sp=(keys.has('ShiftLeft')||keys.has('ShiftRight')?6:3.2)*dt;
+    avatarRoot.position.x=clamp(avatarRoot.position.x+mx/len*sp,-9.5,9.5);
+    avatarRoot.position.z=clamp(avatarRoot.position.z+mz/len*sp,-6.5,7);
+    facing=Math.atan2(mx,mz); walkPhase+=dt*9;
+  } else facing=0;
+  let diff=facing-avatarRoot.rotation.y; diff=Math.atan2(Math.sin(diff),Math.cos(diff));
+  avatarRoot.rotation.y+=diff*(1-Math.exp(-8*dt));
+  modelHolder.position.y=moving?Math.abs(Math.sin(walkPhase))*.06:damp(modelHolder.position.y,0,8,dt);
+
+  updateCursor(); updateHoverText();
+  for(const k in face) face[k]=damp(face[k],faceT[k],camOn?18:6,dt);
+
+  if(hasModel){
+    resetBones();
+    const k=1-Math.exp(-10*dt);
+
+    // Arme: zeigen, wenn Cursor auf der Wand ist
+    let pointArm=null;
+    if(pointingAtBoard&&bones.LeftArm&&bones.RightArm){
+      const lp=bones.LeftArm.getWorldPosition(new THREE.Vector3()), rp=bones.RightArm.getWorldPosition(new THREE.Vector3());
+      pointArm = lp.distanceTo(cursorPoint)<rp.distanceTo(cursorPoint)?'Left':'Right';
+    }
+    for(const side of ['Left','Right']){
+      const sgn=side==='Left'?1:-1;
+      if(pointArm===side){
+        const sh=bones[side+'Arm'].getWorldPosition(new THREE.Vector3());
+        const dir=cursorPoint.clone().sub(sh);
+        aimBone(side+'Arm',side+'ForeArm',dir,k);
+        aimBone(side+'ForeArm',side+'Hand',dir,k);
+      } else {
+        const sway=Math.sin(t*1.3+sgn)*.03;
+        aimBone(side+'Arm',side+'ForeArm',new THREE.Vector3(sgn*.16,-1,.03+sway),k);
+        aimBone(side+'ForeArm',side+'Hand',new THREE.Vector3(sgn*.10,-1,.38),k);
+      }
+    }
+
+    // Kopf: Webcam oder Cursor
+    let yaw=0,pitch=0,roll=0;
+    if(camOn&&faceSeen){ yaw=face.yaw; pitch=face.pitch; roll=face.roll; }
+    else if(mouseSeen){
+      const head=bones.Head||bones.Neck;
+      if(head){
+        const hp=head.getWorldPosition(new THREE.Vector3());
+        const target=pointingAtBoard?cursorPoint:camera.position.clone().add(raycaster.ray.direction.clone().multiplyScalar(12));
+        const loc=avatarRoot.worldToLocal(target.clone()).sub(avatarRoot.worldToLocal(hp.clone()));
+        yaw=clamp(Math.atan2(loc.x,loc.z),-1,1)*.75;
+        pitch=clamp(-Math.atan2(loc.y,Math.hypot(loc.x,loc.z)),-.5,.5)*.8;
+      }
+    }
+    rotateBone('Neck',new THREE.Euler(pitch*.35,yaw*.35,roll*.35),k);
+    rotateBone('Head',new THREE.Euler(pitch*.65,yaw*.65,roll*.65),k);
+
+    // Mimik
+    let jaw=camOn?face.jaw:0, smile=camOn?face.smile:0.12;
+    if(speaking) jaw=Math.max(jaw,.15+.3*Math.abs(Math.sin(t*13)*Math.sin(t*5.3)));
+    const autoBlink=(Math.sin(t*1.7)>.985)?1:0;
+    setMorph('jawOpen',jaw); setMorph('mouthOpen',jaw*.6);
+    setMorph('mouthSmileLeft',smile); setMorph('mouthSmileRight',smile);
+    setMorph('eyeBlinkLeft',camOn?face.blinkL:autoBlink); setMorph('eyeBlinkRight',camOn?face.blinkR:autoBlink);
+  }
+  renderer.render(scene,camera);
+}
+animate();
+</script>
+</body>
+</html>
