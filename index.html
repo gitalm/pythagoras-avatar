@@ -3,253 +3,334 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>3D-Avatar – per Webcam gesteuert (Ready Player Me + MediaPipe)</title>
+<title>Das Sieb des Eratosthenes – Lernhof mit Harry-Avatar</title>
 <style>
   :root { color-scheme: dark; font-family: system-ui, sans-serif; }
   * { box-sizing: border-box; }
   body { margin:0; overflow:hidden; background:#101827; color:#f5f0e6; }
   #hud { position:fixed; z-index:5; inset:0; pointer-events:none; }
-  .panel { background:rgba(12,23,39,.9); border:1px solid rgba(220,200,155,.4);
-           border-radius:12px; padding:12px 16px; box-shadow:0 8px 30px #0006; pointer-events:auto; }
-  #title { position:absolute; left:16px; top:16px; width:300px; }
-  #title h1 { margin:0 0 4px; font:600 16px Georgia,serif; color:#f3d89b; }
+  .panel { background:rgba(12,23,39,.88); border:1px solid rgba(220,200,155,.4);
+           border-radius:12px; padding:12px 15px; box-shadow:0 8px 30px #0006; pointer-events:auto; }
+  #title { position:absolute; left:16px; top:16px; width:290px; }
+  #title h1 { margin:0 0 4px; font:600 17px Georgia,serif; color:#f3d89b; }
   #title p { margin:0; font-size:12px; color:#d6e0e9; }
-  
-  #webcam-panel { position:absolute; left:16px; bottom:16px; width:280px; font-size:12px; }
-  #webcam-container { position:relative; width:100%; height:140px; background:#000; border-radius:8px; overflow:hidden; margin-top:8px; }
-  #webcam-video { position:absolute; width:100%; height:100%; object-fit:cover; transform:scaleX(-1); }
-  
-  .action-btn { border:1px solid #b69a61; background:#253d56; color:#fff5dc; border-radius:7px; padding:8px 12px; cursor:pointer; font-size:13px; width:100%; margin-top:8px; pointer-events:auto; text-align:center; display:block; }
-  .action-btn:hover { background:#365574; }
-
-  #bottom { position:absolute; left:50%; transform:translateX(-50%); bottom:16px; width:min(600px, calc(100vw - 32px)); }
-  #message { font:16px/1.4 Georgia,serif; text-align:center; }
+  #help { position:absolute; left:16px; top:92px; width:290px; font-size:12px; line-height:1.55; }
+  #help strong { color:#f3d89b; }
+  #webcam-panel { position:absolute; left:16px; bottom:16px; width:290px; font-size:12px; }
+  #webcam-container { width:100%; height:150px; background:#000; border-radius:8px; overflow:hidden; margin-top:6px; }
+  #webcam-video { width:100%; height:100%; object-fit:cover; transform:scaleX(-1); }
+  #cam-status { margin-top:6px; font-size:11px; color:#a8e6b0; min-height:30px; }
+  #hint { position:absolute; right:16px; top:16px; width:290px; font-size:12px; line-height:1.5; color:#d6e0e9; }
+  #hint strong { color:#f3d89b; display:block; margin-bottom:4px; }
+  #hint ol { margin:0; padding-left:18px; } #hint li { margin-bottom:3px; }
+  #bottom { position:absolute; left:322px; right:322px; bottom:16px; display:flex; gap:10px; align-items:flex-end; }
+  #message-box { flex:1; }
+  #speaker { font:600 13px Georgia,serif; color:#f3d89b; margin-bottom:3px; }
+  #message { font:15px/1.4 Georgia,serif; min-height:42px; }
+  #hover { margin-top:6px; font-size:12px; color:#a8d0f0; min-height:16px; }
+  .btn { border:1px solid #b69a61; background:#253d56; color:#fff5dc; border-radius:7px; padding:8px 12px; cursor:pointer; font-size:13px; pointer-events:auto; }
+  .btn:hover { background:#365574; }
+  #loading { position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); font-size:15px; }
+  @media(max-width:1100px){ #hint{display:none} #bottom{right:16px} }
+  @media(max-width:760px){ #bottom{left:16px; bottom:200px} #help{display:none} }
 </style>
-<!-- Three.js r128 & GLTFLoader -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
-<!-- MediaPipe Face Mesh -->
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
 </head>
 <body>
 <div id="hud">
-  <section id="title" class="panel">
-    <h1>3D-Avatar im antiken Lernhof</h1>
-    <p>Steuerung via Webcam & MediaPipe</p>
+  <section id="title" class="panel"><h1>Das Sieb des Eratosthenes</h1><p>Primzahlen bis 100 entdecken</p></section>
+
+  <section id="help" class="panel">
+    <strong>Steuerung</strong><br>
+    <b>Maus</b> – Avatar schaut zum Cursor und zeigt auf die Zahlenwand<br>
+    <b>W A S D</b> – Avatar laufen lassen (Umschalt = schneller)<br>
+    <b>Leertaste</b> – nächster Schritt &nbsp; <b>R</b> – zurücksetzen<br>
+    <b>E</b> – Erklärung vorlesen<br>
+    <b>Webcam</b> – Kopf und Mimik übernehmen
   </section>
 
   <section id="webcam-panel" class="panel">
     <strong>Webcam-Steuerung</strong>
-    <div id="webcam-container">
-      <video id="webcam-video" autoplay playsinline muted></video>
+    <div id="webcam-container"><video id="webcam-video" autoplay playsinline muted></video></div>
+    <div style="display:flex; gap:8px; margin-top:8px;">
+      <button id="toggle-cam" class="btn" style="flex:1">▶ Webcam starten</button>
     </div>
-    <button id="toggle-cam" class="action-btn">▶ Webcam starten</button>
-    <button id="toggle-demo" class="action-btn" style="background:#174c80;">🕺 Demo-Modus</button>
+    <div id="cam-status">Webcam aus. (Läuft nur über https oder localhost.)</div>
   </section>
 
-  <section id="bottom" class="panel">
-    <div id="message">Willkommen! Starte die Webcam oder den Demo-Modus, um den Avatar zu bewegen.</div>
-    <button id="speak" class="action-btn" style="margin-top:10px;">🗣️ Sprechen lassen (Satz des Pythagoras)</button>
+  <section id="hint" class="panel">
+    <strong>So funktioniert’s</strong>
+    <ol>
+      <li>Die 1 ist keine Primzahl (grau).</li>
+      <li>Die 2 ist prim (grün) – alle Vielfachen von 2 werden rot.</li>
+      <li>Die nächste unmarkierte Zahl ist 3 – sie ist prim.</li>
+      <li>Markiere alle Vielfachen von 3.</li>
+      <li>Fahre fort mit 5 und 7.</li>
+      <li>Übrig bleiben die Primzahlen (grün).</li>
+    </ol>
+    <div style="margin-top:8px;font-size:11px;color:#bba882">Bis 100 genügen die Primzahlen bis √100 = 10: 2, 3, 5, 7.</div>
   </section>
+
+  <div id="loading">Avatar wird geladen …</div>
+
+  <div id="bottom">
+    <div id="message-box" class="panel">
+      <div id="speaker">Eratosthenes</div>
+      <div id="message"></div>
+      <div id="hover"></div>
+    </div>
+    <button id="next" class="btn" style="height:46px;font-weight:bold">Nächster Schritt ␣</button>
+    <button id="speak" class="btn" style="height:46px">🔊 Vorlesen</button>
+  </div>
 </div>
 
 <script>
-// Three.js Setup
+// ================= Grundaufbau =================
+const AVATAR_HEIGHT = 3.2;   // Höhe des Avatars in Szeneneinheiten
+const GLB_URLS = [
+  'harry.glb',  // lokal neben der index.html (falls vorhanden)
+  'https://raw.githubusercontent.com/gitalm/pythagoras-avatar/tipp/ready-player-me-harry-potter/source/harry.glb'
+];
+const $ = id => document.getElementById(id);
+const clamp = THREE.MathUtils.clamp;
+const damp = (a,b,lambda,dt) => a + (b-a)*(1-Math.exp(-lambda*dt)); // eigene damp-Funktion (r128 hat keine)
+
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x8ab5d8);
-scene.fog = new THREE.Fog(0x8ab5d8, 10, 30);
-
-const camera = new THREE.PerspectiveCamera(45, innerWidth/innerHeight, 0.1, 100);
-camera.position.set(0, 1.6, 3.5);
-
+scene.fog = new THREE.Fog(0x8ab5d8, 30, 80);
+const camera = new THREE.PerspectiveCamera(50, innerWidth/innerHeight, .1, 150);
+camera.position.set(1.5, 2.6, 10.5);
+camera.lookAt(0, 2.6, -8);
 const renderer = new THREE.WebGLRenderer({antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
 renderer.setSize(innerWidth, innerHeight);
-renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.shadowMap.enabled = true;
 document.body.appendChild(renderer.domElement);
-renderer.domElement.style.position = 'fixed';
-renderer.domElement.style.inset = '0';
-renderer.domElement.style.zIndex = '0';
+Object.assign(renderer.domElement.style,{position:'fixed',inset:'0',zIndex:'0'});
 
-// Lichtquellen
-scene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 1.5));
-const dirLight = new THREE.DirectionalLight(0xffffff, 1.2);
-dirLight.position.set(5, 10, 7);
-dirLight.castShadow = true;
-scene.add(dirLight);
+scene.add(new THREE.HemisphereLight(0xfff1d2, 0x596477, 1.3));
+const sun = new THREE.DirectionalLight(0xffe2ad, 1.6);
+sun.position.set(-6,14,10); sun.castShadow = true;
+sun.shadow.camera.left=-14; sun.shadow.camera.right=14; sun.shadow.camera.top=14; sun.shadow.camera.bottom=-14;
+sun.shadow.mapSize.set(2048,2048);
+scene.add(sun);
 
-// Boden
-const floor = new THREE.Mesh(
-  new THREE.PlaneGeometry(20, 20),
-  new THREE.MeshStandardMaterial({color: 0xcbbd9e, roughness: 0.8})
-);
-floor.rotation.x = -Math.PI / 2;
-floor.receiveShadow = true;
-scene.add(floor);
+const mat = (c,r=.8)=>new THREE.MeshStandardMaterial({color:c,roughness:r});
+const marble=mat(0xe3d6bb), trim=mat(0xbca77f), floorMat=mat(0xcbbd9e), dark=mat(0x43362e);
+function box(w,h,d,m,x,y,z,parent=scene){const o=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),m);o.position.set(x,y,z);o.castShadow=true;o.receiveShadow=true;parent.add(o);return o;}
+function cyl(rt,rb,h,m,x,y,z,parent=scene){const o=new THREE.Mesh(new THREE.CylinderGeometry(rt,rb,h,24),m);o.position.set(x,y,z);o.castShadow=true;o.receiveShadow=true;parent.add(o);return o;}
 
-// Avatar (Fallback bzw. Harry Potter / Ready Player Me kompatibles Skelett)
-let avatarRoot = new THREE.Group();
-scene.add(avatarRoot);
-
-// Kopf und Körper für visuelles Feedback auch ohne GLTF
-const bodyMat = new THREE.MeshStandardMaterial({color: 0x174c80});
-const skinMat = new THREE.MeshStandardMaterial({color: 0xc99269});
-const hairMat = new THREE.MeshStandardMaterial({color: 0x2b1d0c}); // Dunkles Haar (Harry Potter Stil)
-
-const torso = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.2, 0.8, 16), bodyMat);
-torso.position.y = 0.9;
-torso.castShadow = true;
-avatarRoot.add(torso);
-
-const headGroup = new THREE.Group();
-headGroup.position.set(0, 1.45, 0);
-avatarRoot.add(headGroup);
-
-const head = new THREE.Mesh(new THREE.SphereGeometry(0.22, 20, 20), skinMat);
-head.castShadow = true;
-headGroup.add(head);
-
-const hair = new THREE.Mesh(new THREE.SphereGeometry(0.23, 16, 16, 0, Math.PI * 2, 0, Math.PI * 0.6), hairMat);
-hair.position.set(0, 0.05, -0.02);
-headGroup.add(hair);
-
-// Brille (Harry Potter Markenzeichen)
-const glasses = new THREE.Group();
-const frameMat = new THREE.MeshBasicMaterial({color: 0x111111});
-const lGlass = new THREE.Mesh(new THREE.TorusGeometry(0.06, 0.008, 12, 24), frameMat);
-lGlass.position.set(-0.07, 0.02, 0.2);
-const rGlass = new THREE.Mesh(new THREE.TorusGeometry(0.06, 0.008, 12, 24), frameMat);
-rGlass.position.set(0.07, 0.02, 0.2);
-const bridge = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.01, 0.01), frameMat);
-bridge.position.set(0, 0.04, 0.2);
-glasses.add(lGlass, rGlass, bridge);
-headGroup.add(glasses);
-
-// Lade offizielles Ready Player Me Modell falls gewünscht, ansonsten bleibt der detaillierte Avatar aktiv
-const loader = new THREE.GLTFLoader();
-loader.load(
-  'https://models.readyplayer.me/646c071acc84f2954f9a5676.glb',
-  (gltf) => {
-    avatarRoot.remove(torso);
-    avatarRoot.remove(headGroup);
-    const model = gltf.scene;
-    model.scale.set(1.2, 1.2, 1.2);
-    model.position.set(0, 0, 0);
-    avatarRoot.add(model);
-  },
-  undefined,
-  (error) => { console.log('Verwende integrierten Avatar-Fallback.'); }
-);
-
-// Webcam & MediaPipe Setup
-const videoElement = document.getElementById('webcam-video');
-let webcamActive = false;
-let demoMode = false;
-let targetHeadRotation = { x: 0, y: 0 };
-
-const faceMesh = new FaceMesh({
-  locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`
-});
-faceMesh.setOptions({
-  maxNumFaces: 1,
-  refineLandmarks: true,
-  minDetectionConfidence: 0.5,
-  minTrackingConfidence: 0.5
-});
-
-faceMesh.onResults((results) => {
-  if (webcamActive && results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
-    const lm = results.multiFaceLandmarks[0];
-    const nose = lm[1], leftEar = lm[234], rightEar = lm[454];
-    const dx = rightEar.x - leftEar.x;
-    targetHeadRotation.y = (nose.x - (leftEar.x + rightEar.x) / 2) / dx * 1.5;
-    targetHeadRotation.x = (nose.y - (leftEar.y + rightEar.y) / 2) * 1.2;
-  }
-});
-
-const cameraUtils = new Camera(videoElement, {
-  onFrame: async () => {
-    if (webcamActive) {
-      await faceMesh.send({ image: videoElement });
-    }
-  },
-  width: 320,
-  height: 240
-});
-
-document.getElementById('toggle-cam').onclick = async () => {
-  webcamActive = !webcamActive;
-  demoMode = false;
-  if (webcamActive) {
-    try {
-      await cameraUtils.start();
-      document.getElementById('toggle-cam').textContent = '⏹ Webcam stoppen';
-      document.getElementById('toggle-cam').style.background = '#bd6656';
-      document.getElementById('message').textContent = 'Webcam aktiv – bewege deinen Kopf!';
-    } catch(e) {
-      webcamActive = false;
-      document.getElementById('message').textContent = 'Fehler beim Zugriff auf die Webcam.';
-    }
-  } else {
-    cameraUtils.stop();
-    document.getElementById('toggle-cam').textContent = '▶ Webcam starten';
-    document.getElementById('toggle-cam').style.background = '#253d56';
-  }
-};
-
-document.getElementById('toggle-demo').onclick = () => {
-  demoMode = !demoMode;
-  webcamActive = false;
-  if (demoMode) {
-    document.getElementById('toggle-demo').style.background = '#365574';
-    document.getElementById('message').textContent = 'Demo-Modus aktiv: Der Avatar bewegt sich automatisch.';
-  } else {
-    document.getElementById('toggle-demo').style.background = '#174c80';
-    document.getElementById('message').textContent = 'Demo-Modus beendet.';
-  }
-};
-
-// Sprachausgabe
-document.getElementById('speak').onclick = () => {
-  if (!('speechSynthesis' in window)) return;
-  speechSynthesis.cancel();
-  const text = "Im rechtwinkligen Dreieck ist die Summe der Flächeninhalt der Kathetenquadrate gleich dem Flächeninhalt des Hypotenusenquadrats. A Quadrat plus B Quadrat ist gleich C Quadrat.";
-  const u = new SpeechSynthesisUtterance(text);
-  u.lang = 'de-DE';
-  u.rate = 0.95;
-  speechSynthesis.speak(u);
-  
-  // Kleiner Sprech-Effekt
-  document.getElementById('message').textContent = '🗣️ ' + text;
-};
-
-// Resize Handler
-window.addEventListener('resize', () => {
-  camera.aspect = innerWidth /innerHeight;
-  camera.updateProjectionMatrix();
-  renderer.setSize(innerWidth, innerHeight);
-});
-
-// Animationsloop
-const clock = new THREE.Clock();
-function animate() {
-  requestAnimationFrame(animate);
-  const dt = clock.getDelta();
-  const time = clock.getElapsedTime();
-
-  if (webcamActive) {
-    headGroup.rotation.y = THREE.MathUtils.damp(headGroup.rotation.y, targetHeadRotation.y, 8, dt);
-    headGroup.rotation.x = THREE.MathUtils.damp(headGroup.rotation.x, targetHeadRotation.x, 8, dt);
-  } else if (demoMode) {
-    headGroup.rotation.y = Math.sin(time * 1.5) * 0.4;
-    headGroup.rotation.x = Math.cos(time * 1.0) * 0.2;
-    avatarRoot.rotation.y = Math.sin(time * 0.5) * 0.2;
-  }
-
-  renderer.render(scene, camera);
+// Hof
+box(70,.5,70,floorMat,0,-.3,0);
+for(let x=-30;x<=30;x+=3) for(let z=-25;z<=25;z+=3){
+  const s=box(2.92,.025,2.92,mat(((x+z)/3)%2===0?0xd9cbb0:0xcbbd9e),x,-.035,z); s.castShadow=false;
 }
-animate();
-</script>
-</body>
-</html>
+for(let i=0;i<9;i++){
+  const h=new THREE.Mesh(new THREE.SphereGeometry(1,24,16),mat(i%2?0x66866e:0x819b79));
+  h.scale.set(8,2.2,3); h.position.set(-22+i*6,1,-30-(i%3)*2); scene.add(h);
+}
+for(const [x,z,s] of [[-14,-7,1.2],[-17,-12,1],[14,-12,1.1],[19,-8,1.3]]){
+  cyl(.12,.22,2.8,dark,x,1.4,z);
+  const c=new THREE.Mesh(new THREE.ConeGeometry(.75*s,3.7*s,8),mat(0x315743)); c.position.set(x,3.6*s,z); c.castShadow=true; scene.add(c);
+}
+for(const z of [-10,-4,2,8]) for(const x of [-12,12]){
+  cyl(.62,.72,5.2,marble,x,2.6,z); cyl(.82,.82,.28,trim,x,5.25,z); cyl(.85,.85,.22,trim,x,.12,z); box(1.7,.22,1.7,trim,x,5.5,z);
+}
+
+// Zahlenwand
+const BOARD_Z = -8.47, BOARD_W = 10.9, BOARD_H = 5.95, BOARD_Y = 3.55;
+box(12,7.4,.65,marble,0,3.7,-9.1);
+box(11.5,6.5,.12,dark,0,BOARD_Y,-8.72);
+box(11.25,6.25,.12,trim,0,BOARD_Y,-8.62);
+const boardCanvas=document.createElement('canvas'); boardCanvas.width=1100; boardCanvas.height=600;
+const ctx=boardCanvas.getContext('2d');
+const boardTex=new THREE.CanvasTexture(boardCanvas);
+const boardMesh=new THREE.Mesh(new THREE.PlaneGeometry(BOARD_W,BOARD_H),new THREE.MeshBasicMaterial({map:boardTex}));
+boardMesh.position.set(0,BOARD_Y,BOARD_Z); scene.add(boardMesh);
+box(11.4,.55,.2,trim,0,7.0,-8.48);
+{
+  const c=document.createElement('canvas'); c.width=1100; c.height=100;
+  const t=c.getContext('2d'); t.fillStyle='#253c50'; t.fillRect(0,0,1100,100);
+  t.fillStyle='#f4dfad'; t.font='bold 44px Georgia'; t.textAlign='center'; t.fillText('DAS SIEB DES ERATOSTHENES',550,64);
+  const tex=new THREE.CanvasTexture(c);
+  const m=new THREE.Mesh(new THREE.PlaneGeometry(10.9,.5),new THREE.MeshBasicMaterial({map:tex}));
+  m.position.set(0,7.0,-8.36); scene.add(m);
+}
+// Laserpunkt
+const laser=new THREE.Mesh(new THREE.SphereGeometry(.09,16,12),new THREE.MeshBasicMaterial({color:0xff3030}));
+laser.visible=false; scene.add(laser);
+
+// ================= Sieb-Logik =================
+const steps=[
+ {t:'Willkommen! Ich bin Eratosthenes. Gemeinsam entdecken wir die Primzahlen von 1 bis 100. Drücke die Leertaste.', s:'Willkommen! Gemeinsam entdecken wir die Primzahlen von eins bis hundert.'},
+ {t:'Die 1 ist keine Primzahl: Sie hat nicht genau zwei Teiler. Wir markieren sie grau.', s:'Die Eins ist keine Primzahl. Eine Primzahl hat genau zwei Teiler.'},
+ {t:'Die 2 ist die kleinste und einzige gerade Primzahl. Alle weiteren Vielfachen von 2 sind keine Primzahlen (rot).', s:'Die Zwei ist die kleinste Primzahl. Alle weiteren Vielfachen von zwei sind keine Primzahlen.'},
+ {t:'Die nächste unmarkierte Zahl ist 3 – sie ist prim. Markiere ihre Vielfachen 6, 9, 12 …', s:'Die nächste unmarkierte Zahl ist drei. Sie ist prim. Ihre Vielfachen werden markiert.'},
+ {t:'Die nächste unmarkierte Zahl ist 5. Markiere ihre Vielfachen, soweit noch nicht markiert.', s:'Nun kommt die fünf. Markiere ihre Vielfachen.'},
+ {t:'Die nächste unmarkierte Zahl ist 7. Danach sind alle nötigen Primzahlen bearbeitet, denn Wurzel aus 100 ist 10.', s:'Jetzt die sieben. Da die Wurzel aus hundert zehn ist, reichen zwei, drei, fünf und sieben.'},
+ {t:'Geschafft! Alle nicht markierten Zahlen größer als 1 sind Primzahlen – es gibt 25 davon.', s:'Geschafft! Die grünen Zahlen sind die fünfundzwanzig Primzahlen bis hundert.'}
+];
+const primes=new Set([2,3,5,7,11,13,17,19,23,29,31,37,41,43,47,53,59,61,67,71,73,79,83,89,97]);
+let stepIndex=0; const crossed=new Set(); let hoverNum=0;
+const M=12,G=5,CW=(1100-M*2-G*9)/10,CH=(600-M*2-G*9)/10;
+
+function redrawBoard(){
+  ctx.fillStyle='#d8c9ac'; ctx.fillRect(0,0,1100,600);
+  const confirmed = stepIndex>=6 ? primes : new Set([2,3,5,7].filter((p,i)=>stepIndex>=i+2));
+  for(let n=1;n<=100;n++){
+    const i=n-1,row=Math.floor(i/10),col=i%10,x=M+col*(CW+G),y=M+row*(CH+G);
+    let fill='#e5d8bf';
+    if(n===1&&stepIndex>=1) fill='#92918b';
+    else if(confirmed.has(n)) fill='#65bd77';
+    else if(crossed.has(n)) fill='#bd6656';
+    ctx.fillStyle=fill; ctx.fillRect(x,y,CW,CH);
+    ctx.strokeStyle='#8d8069'; ctx.lineWidth=2; ctx.strokeRect(x,y,CW,CH);
+    ctx.fillStyle='#202c35'; ctx.font='bold 31px Georgia'; ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillText(String(n),x+CW/2,y+CH/2);
+    if(n===hoverNum){ ctx.strokeStyle='#2a6fdb'; ctx.lineWidth=6; ctx.strokeRect(x+2,y+2,CW-4,CH-4); }
+  }
+  boardTex.needsUpdate=true;
+}
+function updateLesson(){ $('message').textContent=steps[stepIndex].t; redrawBoard(); }
+function applyStep(){
+  const mark=(p)=>{for(let n=p*2;n<=100;n+=p)crossed.add(n);};
+  if(stepIndex===0) crossed.add(1);
+  else if(stepIndex===1) mark(2);
+  else if(stepIndex===2) mark(3);
+  else if(stepIndex===3) mark(5);
+  else if(stepIndex===4) mark(7);
+  if(stepIndex<6) stepIndex++;
+  updateLesson();
+}
+function resetSieve(){ stepIndex=0; crossed.clear(); updateLesson(); }
+updateLesson();
+
+// Sprachausgabe (mit Lippenbewegung)
+let speaking=false;
+function speak(){
+  if(!('speechSynthesis' in window)) return;
+  speechSynthesis.cancel();
+  const u=new SpeechSynthesisUtterance(steps[stepIndex].s); u.lang='de-DE'; u.rate=.92;
+  u.onstart=()=>speaking=true; u.onend=u.onerror=()=>speaking=false;
+  speechSynthesis.speak(u);
+}
+$('next').onclick=applyStep; $('speak').onclick=speak;
+
+// ================= Avatar =================
+const avatarRoot=new THREE.Group(); scene.add(avatarRoot);
+avatarRoot.position.set(6.5,0,-1);
+const modelHolder=new THREE.Group(); avatarRoot.add(modelHolder);
+
+const bones={}; const restQ={}; const smoothQ={};
+const morphMeshes=[]; let morphCount=0;
+let hasModel=false;
+
+function buildFallback(){
+  const b=mat(0x174c80), s=mat(0xc99269);
+  cyl(.35,.5,1.5,b,0,1.2,0,modelHolder);
+  const h=new THREE.Mesh(new THREE.SphereGeometry(.32,20,16),s); h.position.y=2.3; h.castShadow=true; modelHolder.add(h);
+  const hair=new THREE.Mesh(new THREE.SphereGeometry(.34,16,12,0,Math.PI*2,0,Math.PI*.6),mat(0x2b1d0c)); hair.position.y=2.35; modelHolder.add(hair);
+}
+function loadAvatar(i=0){
+  if(i>=GLB_URLS.length){
+    buildFallback(); $('loading').textContent='Avatar konnte nicht geladen werden – Ersatzfigur aktiv.';
+    setTimeout(()=>$('loading').style.display='none',4000); return;
+  }
+  new THREE.GLTFLoader().load(GLB_URLS[i], gltf=>{
+    const model=gltf.scene;
+    // Auf Zielhöhe skalieren, Füße auf den Boden
+    const bb=new THREE.Box3().setFromObject(model);
+    const sc=AVATAR_HEIGHT/(bb.max.y-bb.min.y);
+    model.scale.setScalar(sc);
+    model.updateMatrixWorld(true);
+    const bb2=new THREE.Box3().setFromObject(model);
+    model.position.y-=bb2.min.y;
+    modelHolder.add(model);
+    model.traverse(o=>{
+      if(o.isMesh){ o.castShadow=true; o.receiveShadow=true; o.frustumCulled=false;
+        if(o.morphTargetDictionary){ morphMeshes.push(o); morphCount+=Object.keys(o.morphTargetDictionary).length; } }
+      if(o.isBone){ const n=o.name.replace(/^mixamorig:?/,''); if(!bones[n]) bones[n]=o; }
+    });
+    for(const n in bones){ restQ[n]=bones[n].quaternion.clone(); smoothQ[n]=bones[n].quaternion.clone(); }
+    hasModel=true;
+    $('loading').style.display='none';
+    $('cam-status').textContent=`Avatar geladen · ${morphCount} Morph Targets für Mimik · Knochen: ${Object.keys(bones).length}`;
+  }, undefined, err=>{ console.warn('GLB-Laden fehlgeschlagen:',GLB_URLS[i],err); loadAvatar(i+1); });
+}
+loadAvatar();
+
+// ---- Hilfsfunktionen für Knochen (arbeitet in Weltkoordinaten, unabhängig von der Bone-Ausrichtung) ----
+const _q1=new THREE.Quaternion(), _q2=new THREE.Quaternion(), _q3=new THREE.Quaternion(), _v1=new THREE.Vector3(), _v2=new THREE.Vector3();
+function resetBones(){ for(const n in restQ) bones[n].quaternion.copy(restQ[n]); modelHolder.updateMatrixWorld(true); }
+function setSmoothed(name,targetLocal,k){ smoothQ[name].slerp(targetLocal,k); bones[name].quaternion.copy(smoothQ[name]); bones[name].updateWorldMatrix(true,true); }
+
+// Knochen so drehen, dass die Strecke bone→child in Richtung dirWorld zeigt
+function aimBone(name,childName,dirWorld,k){
+  const b=bones[name], c=bones[childName]; if(!b||!c) return;
+  b.updateWorldMatrix(true,true);
+  b.getWorldPosition(_v1); c.getWorldPosition(_v2);
+  const cur=_v2.sub(_v1).normalize();
+  const delta=_q1.setFromUnitVectors(cur,dirWorld.clone().normalize());
+  const bw=b.getWorldQuaternion(_q2);
+  const newWorld=_q3.copy(delta).multiply(bw);
+  const pw=b.parent.getWorldQuaternion(new THREE.Quaternion());
+  const local=pw.invert().multiply(newWorld);
+  setSmoothed(name,local,k);
+}
+// Knochen im Avatar-Koordinatensystem um Euler drehen (x=nicken, y=drehen, z=neigen)
+function rotateBone(name,euler,k){
+  const b=bones[name]; if(!b) return;
+  const A=avatarRoot.getWorldQuaternion(new THREE.Quaternion());
+  const E=new THREE.Quaternion().setFromEuler(euler);
+  const D=A.clone().multiply(E).multiply(A.clone().invert());
+  const pw=b.parent.getWorldQuaternion(new THREE.Quaternion());
+  const restWorld=pw.clone().multiply(restQ[name]);
+  const newWorld=D.multiply(restWorld);
+  const local=pw.invert().multiply(newWorld);
+  setSmoothed(name,local,k);
+}
+function setMorph(name,value){
+  for(const m of morphMeshes){ const i=m.morphTargetDictionary[name]; if(i!==undefined) m.morphTargetInfluences[i]=value; }
+}
+
+// ================= Cursor ("Fernbedienung") =================
+const mouse=new THREE.Vector2(0,0); let mouseSeen=false;
+const raycaster=new THREE.Raycaster();
+const boardPlane=new THREE.Plane(new THREE.Vector3(0,0,1),-BOARD_Z);
+const cursorPoint=new THREE.Vector3(0,3.5,BOARD_Z);
+let pointingAtBoard=false;
+addEventListener('mousemove',e=>{
+  mouse.set(e.clientX/innerWidth*2-1,-(e.clientY/innerHeight)*2+1); mouseSeen=true;
+});
+function updateCursor(){
+  raycaster.setFromCamera(mouse,camera);
+  const hit=raycaster.ray.intersectPlane(boardPlane,new THREE.Vector3());
+  pointingAtBoard=false; hoverNum=0;
+  if(hit){
+    cursorPoint.copy(hit);
+    const u=(hit.x+BOARD_W/2)/BOARD_W, v=(BOARD_Y+BOARD_H/2-hit.y)/BOARD_H;
+    if(u>0&&u<1&&v>0&&v<1&&mouseSeen){
+      pointingAtBoard=true;
+      const col=Math.floor((u*1100-M)/(CW+G)), row=Math.floor((v*600-M)/(CH+G));
+      if(col>=0&&col<10&&row>=0&&row<10) hoverNum=row*10+col+1;
+    }
+  }
+  laser.visible=pointingAtBoard;
+  if(pointingAtBoard) laser.position.set(cursorPoint.x,cursorPoint.y,BOARD_Z+.05);
+}
+let lastHover=-1;
+function updateHoverText(){
+  if(hoverNum===lastHover) return; lastHover=hoverNum; redrawBoard();
+  if(!hoverNum){ $('hover').textContent=''; return; }
+  const n=hoverNum;
+  $('hover').textContent = n===1 ? '1: keine Primzahl.' :
+    primes.has(n) ? `${n} ist eine Primzahl.` :
+    `${n} ist zusammengesetzt, z. B. ${n} = ${[2,3,5,7,11,13,17,19,23,29,31,37,41,43,47].find(p=>n%p===0)} · ${n/[2,3,5,7,11,13,17,19,23,29,31,37,41,43,47].find(p=>n%p===0)}.`;
+}
+
+// ================= Webcam + Mimik =================
+const video=$('webcam-video');
+const face={yaw:0,pitch:0,roll:0,jaw:0,smile:0,blinkL:0,blinkR:0};
+const faceT={yaw:0,pitch:0,roll:0,jaw:0,smile:0,blink
