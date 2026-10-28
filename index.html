@@ -119,17 +119,40 @@ function setMorph(name, value) {
 }
 
 async function loadLandmarker(vision, fileset, kind, modelPath) {
-  // Erst GPU, bei Fehler CPU (Intel-Grafik mag GPU-Delegate oft nicht)
+  // Erst GPU versuchen, bei Fehler auf CPU wechseln.
   for (const delegate of ['GPU', 'CPU']) {
     try {
-      return await (kind === 'face' ? vision.FaceLandmarker : vision.PoseLandmarker).createFromOptions(fileset, {
-        baseOptions: { modelAssetPath: modelPath, delegate },
-        outputFaceBlendshapes: true, outputFacialTransformationMatrixes: kind === 'face',
-        numFaces: 1, numPoses: 1
+      const Landmarker = kind === 'face'
+        ? vision.FaceLandmarker
+        : vision.PoseLandmarker;
+
+      return await Landmarker.createFromOptions(fileset, {
+        baseOptions: {
+          modelAssetPath: modelPath,
+          delegate: delegate
+        },
+
+        // Wichtig: detectForVideo() benötigt den Videomodus!
+        runningMode: 'VIDEO',
+
+        // Einstellungen für die Erkennung
+        numFaces: 1,
+        numPoses: 1,
+
+        // Gesichtsausgabe
+        outputFaceBlendshapes: kind === 'face',
+        outputFacialTransformationMatrixes: kind === 'face'
       });
+
     } catch (e) {
-      console.warn(kind + ' mit ' + delegate + ' fehlgeschlagen:', e);
-      if (delegate === 'CPU') throw e;
+      console.warn(
+        kind + ' mit ' + delegate + ' fehlgeschlagen:',
+        e
+      );
+
+      if (delegate === 'CPU') {
+        throw e;
+      }
     }
   }
 }
